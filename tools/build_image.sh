@@ -16,6 +16,9 @@ export DOCKER_HOST="${DOCKER_HOST:-unix://$HOME/.rd/docker.sock}"
 
 [ -f "$STOCK" ] || { echo "no stock image: $STOCK" >&2; exit 1; }
 [ -f "$STAGE/settings" ] || { echo "no settings in stage dir: $STAGE" >&2; exit 1; }
+# OS-level settings staged by stage_card.py (NTP server, services).
+ROOTFS_SH="$STAGE.rootfs.sh"
+[ -f "$ROOTFS_SH" ] || { echo "no $ROOTFS_SH; re-run stage_card.py" >&2; exit 1; }
 [ "$STOCK" != "$OUT" ] || { echo "refusing to write over the stock image" >&2; exit 1; }
 
 # APFS clone: instant, and the stock file stays untouched.
@@ -23,7 +26,7 @@ rm -f "$OUT"
 cp -c "$STOCK" "$OUT"
 
 docker run --rm --privileged \
-    -v "$OUT:/img/out.img" -v "$STAGE:/stage:ro" \
+    -v "$OUT:/img/out.img" -v "$STAGE:/stage:ro" -v "$ROOTFS_SH:/rootfs.sh:ro" \
     debian:trixie-slim bash -euo pipefail -c '
 apt-get -qq update >/dev/null && apt-get -qq install -y fdisk rsync e2fsprogs dosfstools >/dev/null 2>&1
 
@@ -48,9 +51,11 @@ find $MEDIA -type d -exec chmod 775 {} +
 find $MEDIA -type f -exec chmod 664 {} +
 chmod 755 $MEDIA/scripts/*.sh 2>/dev/null || true
 
-# Same markers FPP s own restore sets (www/backup.php): reconcile restored
-# settings/packages on first boot.
+# The restore marker FPP s own restore sets (www/backup.php): settings
+# migrations and user packages on first boot. Not BootActions; see stage_card.py.
 touch /mnt/root/fpp_restored
+ROOTFS=/mnt/root bash /rootfs.sh
+echo "applied OS settings: $(grep -c . /rootfs.sh) lines"
 # Grow the root partition to fill the card on first boot (FPPINIT checkUnpartitionedSpace).
 touch /mnt/boot/fpp_expand_rootfs
 

@@ -220,12 +220,15 @@ def cards():
     return rows
 
 
-def schema_for(snapshot_path, version):
-    """A snapshot of another unit already on the target version, same platform first."""
+def reference_for(snapshot_path, version):
+    """A snapshot of another unit already on the target version, same platform first.
+
+    stage_card.py takes the owner's 10.x setup answers (LegalJurisdiction,
+    privacy) from it when the source predates them."""
     m = json.loads((ROOT / snapshot_path / "manifest.json").read_text())
     cands = [s for s in snapshots() if s["version"] == version and s["host"] != m["host"]]
     cands.sort(key=lambda s: (s["platform"] == m.get("platform"), s["taken"]), reverse=True)
-    return cands[0]["path"] + "/api/settings-live.json" if cands else None
+    return cands[0]["path"] if cands else None
 
 
 # ---------------------------------------------------------------- actions
@@ -265,9 +268,9 @@ def act_build(body):
     stage = ROOT / "work/stage" / host
     out = OUT / f"{host}-{ver}.img"
     step1 = [PY, TOOLS / "stage_card.py", snap, stage]
-    schema = schema_for(str(snap.relative_to(ROOT)), ver)
-    if schema:
-        step1 += ["--schema", ROOT / schema]
+    ref = reference_for(str(snap.relative_to(ROOT)), ver)
+    if ref:
+        step1 += ["--reference", ROOT / ref]
     return start_job("build", f"Build {out.name} from {host} {m['taken']}",
                      [step1, ["bash", TOOLS / "build_image.sh", stock, stage, out]], exclusive="build")
 
