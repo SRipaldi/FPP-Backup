@@ -6,3 +6,6 @@ __pycache__/
 *.img
 *.img.xz
 *.zip
+
+# Raw controller snapshots contain secrets; never commit
+snapshots/
