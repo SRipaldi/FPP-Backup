@@ -33,6 +33,7 @@ INFO_ENDPOINTS = {
     "playlists.json": "api/playlists",
 }
 FILE_DIRS = ["config", "playlists", "scripts"]
+MEDIA_DIRS = ["sequences", "music", "videos", "images", "effects"]
 
 
 def get(base, path):
@@ -57,7 +58,7 @@ def newest_backup(files):
     return max(tops, key=lambda n: n.rsplit("_", 1)[-1]) if tops else None
 
 
-def snapshot(base, out_root):
+def snapshot(base, out_root, media=False):
     info = json.loads(get(base, "api/system/info"))
     host = info.get("HostName", "unknown")
     stamp = time.strftime("%Y%m%d-%H%M%S")
@@ -117,7 +118,7 @@ def snapshot(base, out_root):
     except (urllib.error.URLError, TimeoutError, ValueError) as e:
         manifest["errors"].append(f"api/settings: {e}")
 
-    for d in FILE_DIRS:
+    for d in FILE_DIRS + (MEDIA_DIRS if media else []):
         try:
             files = list_dir(base, d)
         except (urllib.error.URLError, TimeoutError, ValueError) as e:
@@ -145,13 +146,15 @@ def main():
     ap.add_argument("targets", nargs="+", help="base URL, or IP when using --via")
     ap.add_argument("--via", help="player IP to proxy through")
     ap.add_argument("--out", default=str(ROOT / "snapshots"))
+    ap.add_argument("--media", action="store_true",
+                    help="also pull sequences, music, videos, images, effects")
     args = ap.parse_args()
 
     failed = 0
     for t in args.targets:
         base = f"http://{args.via}/proxy/{t}" if args.via else t.rstrip("/")
         try:
-            out, m = snapshot(base, Path(args.out))
+            out, m = snapshot(base, Path(args.out), media=args.media)
         except (urllib.error.URLError, TimeoutError, ValueError) as e:
             print(f"FAIL {t}: {e}", file=sys.stderr)
             failed += 1

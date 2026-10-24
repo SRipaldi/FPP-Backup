@@ -9,3 +9,6 @@ __pycache__/
 
 # Raw controller snapshots contain secrets; never commit
 snapshots/
+
+# Downloaded images and build outputs
+work/
