@@ -22,9 +22,8 @@ export DOCKER_HOST="${DOCKER_HOST:-unix://$HOME/.rd/docker.sock}"
 rm -f "$OUT"
 cp -c "$STOCK" "$OUT"
 
-touch "$OUT.boot-sums"
 docker run --rm --privileged \
-    -v "$OUT:/img/out.img" -v "$OUT.boot-sums:/img/boot-sums.txt" -v "$STAGE:/stage:ro" \
+    -v "$OUT:/img/out.img" -v "$STAGE:/stage:ro" \
     debian:trixie-slim bash -euo pipefail -c '
 apt-get -qq update >/dev/null && apt-get -qq install -y fdisk rsync e2fsprogs dosfstools >/dev/null 2>&1
 
@@ -57,11 +56,6 @@ touch /mnt/boot/fpp_expand_rootfs
 
 sync
 df -h /mnt/root | tail -1
-# Per-file sums of the FAT boot partition, for flash_card.py: the flasher may
-# touch sysconf.txt, so that partition is compared file by file, not byte for byte.
-# Lines: <sha256> <bytes> <path>
-(cd /mnt/boot && find . -type f | sort | while read -r f; do
-    echo "$(sha256sum < "$f" | cut -d" " -f1) $(stat -c %s "$f") $f"; done) > /img/boot-sums.txt
 umount /mnt/boot /mnt/root
 fsck.vfat -n $BOOT >/dev/null
 echo "boot fs: clean"
