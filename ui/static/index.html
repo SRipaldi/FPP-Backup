@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="token" content="__TOKEN__">
+<title>FPP Backup</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<header>
+  <h1>FPP Backup</h1>
+  <span id="player" class="muted">connecting…</span>
+  <nav>
+    <button data-tab="controllers" class="active">Controllers</button>
+    <button data-tab="build">Build card</button>
+    <button data-tab="flash">Flash card</button>
+    <button data-tab="jobs">Jobs <span id="jobs-badge" class="badge" hidden></span></button>
+  </nav>
+</header>
+
+<main>
+  <section id="tab-controllers">
+    <div class="bar">
+      <p class="muted">Every action here only reads from controllers. Snapshots stay on this Mac (they contain passwords).</p>
+      <button id="refresh-controllers">Refresh</button>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Controller</th><th>Hardware</th><th>FPP</th><th>Address</th><th>Last snapshot</th><th></th></tr></thead>
+        <tbody id="controllers"><tr><td colspan="6" class="muted">Loading from the player…</td></tr></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section id="tab-build" hidden>
+    <ol class="steps">
+      <li>
+        <h2>Snapshot to rebuild from</h2>
+        <select id="build-snapshot"></select>
+        <p id="build-snapshot-note" class="note"></p>
+      </li>
+      <li>
+        <h2>FPP version for the new card</h2>
+        <div class="row">
+          <select id="build-release"></select>
+          <select id="build-asset"></select>
+        </div>
+        <p id="build-image-note" class="note"></p>
+        <button id="download-image" hidden>Download image</button>
+      </li>
+      <li>
+        <h2>Build</h2>
+        <p class="muted">Writes the snapshot into a copy of the stock image in a container. The stock image is not changed and no card is touched.</p>
+        <button id="build" class="primary" disabled>Build image</button>
+      </li>
+    </ol>
+  </section>
+
+  <section id="tab-flash" hidden>
+    <ol class="steps">
+      <li>
+        <h2>Image</h2>
+        <div id="flash-images" class="choices"></div>
+      </li>
+      <li>
+        <h2>SD card</h2>
+        <div class="row"><div id="flash-cards" class="choices"></div><button id="refresh-cards">Refresh</button></div>
+      </li>
+      <li>
+        <h2>Confirm</h2>
+        <p class="warn">Everything on the selected card will be erased. macOS will ask for an admin password.</p>
+        <div class="row">
+          <input id="flash-confirm" placeholder="type the disk id, e.g. disk4" autocomplete="off" spellcheck="false">
+          <button id="flash" class="danger" disabled>Erase and flash</button>
+        </div>
+      </li>
+    </ol>
+  </section>
+
+  <section id="tab-jobs" hidden>
+    <div class="jobs">
+      <ul id="jobs-list"></ul>
+      <div class="log-pane">
+        <h2 id="log-title" class="muted">Select a job</h2>
+        <pre id="log"></pre>
+        <div id="log-progress" class="progress"></div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<div id="toast" hidden></div>
+<script src="/app.js"></script>
+</body>
+</html>

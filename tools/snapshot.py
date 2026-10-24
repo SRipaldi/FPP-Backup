@@ -130,12 +130,15 @@ def snapshot(base, out_root, media=False):
             if nb:
                 wanted.append(nb)
                 manifest["fpp_backup_file"] = nb
-        for name in wanted:
+        for i, name in enumerate(wanted, 1):
+            # \r progress: the UI shows it as one updating line
+            print(f"\r  {host} {d}: {i}/{len(wanted)} {name[:60]}", end="", file=sys.stderr, flush=True)
             try:
                 save(f"{d}/{name}", get(base, f"api/file/{d}/{urllib.parse.quote(name)}"))
             except (urllib.error.URLError, TimeoutError) as e:
                 manifest["errors"].append(f"{d}/{name}: {e}")
 
+    print("\r", end="", file=sys.stderr, flush=True)
     (out / "manifest.json").write_text(json.dumps(manifest, indent=2))
     return out, manifest
 
