@@ -251,7 +251,7 @@ function renderFleet() {
         <td class="${u.offset_s !== null && Math.abs(u.offset_s) > 2 ? "bad" : ""}">${u.offset_s === null ? "?" : (u.offset_s > 0 ? "+" : "") + u.offset_s + " s"}<span class="sub">${esc((u.clock || "").replace(/^\w+ /, "").replace(/ \d{4}$/, ""))}</span></td>
         <td>${esc(u.uptime || "")}</td><td>${pct(u)}</td></tr>`).join("") + "</tbody>";
 
-  const head = (first) => `<thead><tr>${first}${hosts.map((h) => `<th class="unit${h === master?.host ? " player" : ""}" title="${esc(h)}${h === master?.host ? " (player)" : ""}">${esc(shortHost(h))}${h === master?.host ? " ★" : ""}</th>`).join("")}<th></th></tr></thead>`;
+  const head = (first) => `<thead><tr>${first}${hosts.map((h) => `<th class="unit${h === master?.host ? " player" : ""}" title="${esc(h)}${h === master?.host ? " (player)" : ""}"><span class="vlabel">${esc(shortHost(h))}${h === master?.host ? " ★" : ""}</span></th>`).join("")}<th></th></tr></thead>`;
   const isPlayer = (h) => h === master?.host;
   const val = (v) => `<span class="v" title="${esc(shown(v))}">${esc(shown(v))}</span>`;
   $("#fleet-preview-banner").hidden = !PREVIEW;

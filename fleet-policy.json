@@ -5,10 +5,7 @@
   "match": {
     "TimeZone": {
       "value": "America/Los_Angeles",
-      "equivalent": [
-        "US/Pacific"
-      ],
-      "why": "Same clock everywhere; US/Pacific is missing on 10.x images"
+      "why": "Same clock everywhere (US/Pacific is missing on 10.x images)"
     },
     "ntpServer": {
       "value": "@master",
@@ -66,20 +63,33 @@
     },
     "verbosePlaylistItemDetails": {
       "value": "0",
+      "player": "1",
+      "why": "Added from the Fleet page"
+    },
+    "Service_rsync": {
+      "value": "1",
+      "why": "Added from the Fleet page"
+    },
+    "blankBetweenSequences": {
+      "value": "1",
+      "why": "Added from the Fleet page"
+    },
+    "MultiSyncRefreshStatus": {
+      "value": "1",
+      "why": "Added from the Fleet page"
+    },
+    "MultiSyncMulticast": {
+      "value": "0",
       "why": "Added from the Fleet page"
     }
   },
   "compare": [
-    "Service_rsync",
     "Service_smbd_nmbd",
     "Service_vsftpd",
     "bootDelay",
-    "blankBetweenSequences",
     "MultiSyncCopySequences",
-    "MultiSyncMulticast",
     "MultiSyncUnicast",
     "MultiSyncBroadcast",
-    "MultiSyncRefreshStatus",
     "AutoEnableOutputs",
     "alwaysTransmit",
     "MediaBackend",

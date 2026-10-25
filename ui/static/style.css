@@ -82,8 +82,11 @@ code { font: 12px ui-monospace, Menlo, monospace; }
 .chip.bad { border-color: var(--danger); color: var(--danger); }
 .chip.ok { border-color: var(--ok); color: var(--ok); }
 .warn-badge { background: var(--danger); color: #fff; }
-table.grid th.unit { writing-mode: vertical-rl; transform: rotate(180deg); white-space: nowrap; text-transform: none;
-  letter-spacing: 0; font-size: 12px; padding: 8px 4px; vertical-align: bottom; }
+/* Rotate only the label: a rotated cell is laid out unrotated, which pinned the
+   names to the left edge of wide columns. A centred cell centres the label. */
+table.grid th.unit { text-align: center; vertical-align: bottom; padding: 8px 4px; text-transform: none;
+  letter-spacing: 0; font-size: 12px; }
+table.grid th.unit .vlabel { display: inline-block; writing-mode: vertical-rl; transform: rotate(180deg); white-space: nowrap; }
 table.grid td { white-space: nowrap; font-size: 13px; }
 table.grid td.cell { text-align: center; }
 td.cell.ok { color: var(--muted); }
