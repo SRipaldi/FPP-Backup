@@ -52,17 +52,51 @@ def fetch_json(url, timeout=6, tries=3):
             time.sleep(1)
 
 
-def discover(master):
-    """Every unit the player knows, verified by asking each who it is.
+INVENTORY = Path(__file__).resolve().parent.parent / "fleet-inventory.json"
+
+
+def load_inventory(path=INVENTORY):
+    """Controllers that should exist: {"controllers": [{"host", "ip", "role", "notes"?}]}.
+    None when there is no inventory file yet."""
+    try:
+        return json.loads(Path(path).read_text())
+    except FileNotFoundError:
+        return None
+
+
+def save_inventory(inv, path=INVENTORY):
+    rows = []
+    for c in inv.get("controllers", []):
+        if not NAME_RE.match(c.get("host", "")) or not re.match(r"^\d+\.\d+\.\d+\.\d+$", c.get("ip", "")):
+            raise ValueError(f"bad inventory entry: {c}")
+        rows.append({k: c[k] for k in ("host", "ip", "role", "notes") if c.get(k)})
+    rows.sort(key=lambda c: (c.get("role") != "player", c["host"].lower()))
+    Path(path).write_text(json.dumps({"_comment": "Controllers that should exist. Discovery also probes these "
+                                      "addresses, so a unit missing from the player's list still shows as offline.",
+                                      "controllers": rows}, indent=2) + "\n")
+
+
+def discover(master, inventory=None):
+    """Every unit the player knows plus every unit in the inventory, verified by
+    asking each who it is.
 
     The player is reached directly; others through its proxy, falling back to
     direct (the proxy cannot reach every subnet). The multisync list can be
-    stale, so a unit only counts at an address that answers with its name."""
+    stale, so a unit only counts at an address that answers with its name. The
+    player drops a unit from its list once it has been gone a while, so
+    inventory addresses are probed too: an expected unit then shows as offline
+    instead of vanishing. Each unit gets "expected" (in the inventory or not;
+    None when there is no inventory)."""
     systems = fetch_json(f"http://{master}/api/fppd/multiSyncSystems", timeout=8).get("systems", [])
     by_host = {}
     for s in systems:
         if re.match(r"^\d+\.\d+\.\d+\.\d+$", s.get("address", "")):
             by_host.setdefault(s.get("hostname"), []).append(s["address"])
+    expected = {c["host"]: c for c in (inventory or {}).get("controllers", [])}
+    for host, c in expected.items():
+        addrs = by_host.setdefault(host, [])
+        if c["ip"] not in addrs:
+            addrs.insert(0, c["ip"])
 
     def probe(host, addrs):
         routes = [(a, None) for a in addrs if a == master]
@@ -71,7 +105,9 @@ def discover(master):
         for a, via in routes:
             base = f"http://{via}/proxy/{a}" if via else f"http://{a}"
             try:
-                info = fetch_json(f"{base}/api/system/info", timeout=4 if via else 2, tries=2)
+                # The player's proxy is sometimes slow; one missed reply must not
+                # make an expected unit look offline.
+                info = fetch_json(f"{base}/api/system/info", timeout=6 if via else 3, tries=3)
             except Exception:
                 continue
             if info.get("HostName") and info["HostName"] != host:
@@ -85,6 +121,11 @@ def discover(master):
 
     with concurrent.futures.ThreadPoolExecutor(8) as ex:
         units = list(ex.map(lambda kv: probe(*kv), by_host.items()))
+    for u in units:
+        u["expected"] = (u["host"] in expected) if inventory is not None else None
+        if not u["online"] and u["host"] in expected:
+            u["role"] = expected[u["host"]].get("role", "remote")
+            u["is_master"] = u["role"] == "player"
     return sorted(units, key=lambda u: (not u["is_master"], u["host"].lower()))
 
 
@@ -220,6 +261,7 @@ def validate_policy(policy):
         match[name] = r
     out = {"_comment": policy.get("_comment", ""), "master": text(policy.get("master", DEFAULT_MASTER), "master"),
            "fpp_version": text(policy.get("fpp_version", ""), "fpp_version"), "match": match,
+           "backup_max_age_days": int(policy.get("backup_max_age_days", 7)),
            "compare": [n for n in names(policy.get("compare", []), "compare") if n not in match],
            "per_unit": names(policy.get("per_unit", []), "per_unit"),
            "secret_pattern": secret.pattern}
@@ -228,7 +270,8 @@ def validate_policy(policy):
 
 def scan_fleet(master):
     """Everything drift evaluation needs, from the controllers. Read-only, ~20 s."""
-    units = discover(master)
+    inventory = load_inventory()
+    units = discover(master, inventory)
     online = [u for u in units if u["online"]]
     with concurrent.futures.ThreadPoolExecutor(5) as ex:
         scans = dict(zip([u["host"] for u in online], ex.map(scan_unit, online)))
@@ -238,6 +281,7 @@ def scan_fleet(master):
             info = fetch_json(f"{u['base']}/api/system/info")
             util = info.get("Utilization", {})
             u.update(os_version=info.get("OSVersion"), uptime=util.get("Uptime"),
+                     branch=info.get("Branch"), git_local=info.get("LocalGitVersion"),
                      disk_free=(util.get("Disk", {}).get("Media", {}) or {}).get("Free"),
                      disk_total=(util.get("Disk", {}).get("Media", {}) or {}).get("Total"))
         except Exception:
@@ -247,7 +291,83 @@ def scan_fleet(master):
         u.pop("base", None)
     for u in units:
         u["role"] = "player" if u.get("is_master") else "remote"
-    return {"master": master, "scanned": time.time(), "units": units, "scans": scans}
+    try:
+        updates = update_status(units)
+    except Exception as e:  # GitHub unreachable: report, don't fail the scan
+        updates = {"error": str(e)}
+    for u in units:
+        u["update"] = updates.get(u["host"]) if isinstance(updates, dict) else None
+    player = next((u for u in units if u.get("is_master") and u["online"]), None)
+    show = None
+    if player:
+        try:
+            st = fetch_json(f"http://{master}/api/fppd/status")
+            show = {"status": st.get("status_name"), "playlist": (st.get("current_playlist") or {}).get("playlist"),
+                    "sequence": st.get("current_sequence"), "next": st.get("next_playlist")}
+        except Exception:
+            pass
+    return {"master": master, "scanned": time.time(), "units": units, "scans": scans,
+            "releases": updates.get("_releases") if isinstance(updates, dict) else None,
+            "update_error": updates.get("error") if isinstance(updates, dict) else None,
+            "show": show, "inventory": inventory is not None}
+
+
+# ---------------------------------------------------------------- updates
+
+GITHUB = "https://api.github.com/repos/FalconChristmas/fpp"
+UPDATE_CACHE = Path(__file__).resolve().parent.parent / "work/cache/fpp-github.json"
+UPDATE_TTL = 3600
+
+
+def _github(path, cache):
+    """GET from the FPP repo's API, cached for an hour (unauthenticated: 60/hour)."""
+    hit = cache.get(path)
+    if hit and time.time() - hit["t"] < UPDATE_TTL:
+        return hit["data"]
+    req = urllib.request.Request(f"{GITHUB}/{path}", headers={"Accept": "application/vnd.github+json"})
+    with urllib.request.urlopen(req, timeout=15) as r:
+        data = json.load(r)
+    cache[path] = {"t": time.time(), "data": data}
+    return data
+
+
+def _vkey(v):
+    return tuple(int(x) for x in re.findall(r"\d+", str(v or "0"))[:3])
+
+
+def update_status(units):
+    """Per unit: a newer FPP release than it runs, and newer commits on its own
+    branch (patches). Checked from this machine, because most units can't reach
+    GitHub themselves (their RemoteGitVersion is 'Unknown')."""
+    try:
+        cache = json.loads(UPDATE_CACHE.read_text())
+    except (FileNotFoundError, ValueError):
+        cache = {}
+    releases = [r for r in _github("releases?per_page=15", cache) if not r["draft"] and not r["prerelease"]]
+    latest = max(releases, key=lambda r: _vkey(r["tag_name"]))["tag_name"] if releases else None
+    out = {"_releases": {"latest": latest, "published": next((r["published_at"] for r in releases
+                                                              if r["tag_name"] == latest), None)}}
+    for u in units:
+        if not u.get("online"):
+            continue
+        info = {"latest_release": latest,
+                "release_newer": bool(latest and _vkey(latest) > _vkey(u.get("version")))}
+        branch, local = u.get("branch"), (u.get("git_local") or "").strip()
+        if branch and re.match(r"^[0-9a-f]{7,40}$", local):
+            try:
+                head = _github(f"branches/{branch}", cache)["commit"]["sha"]
+                if head.startswith(local):
+                    info["patch_commits"] = 0
+                else:
+                    cmp = _github(f"compare/{local}...{head[:12]}", cache)
+                    info["patch_commits"] = cmp.get("ahead_by", 0) if cmp.get("status") in ("ahead", "diverged") else 0
+                info["branch_head"] = head[:9]
+            except Exception as e:
+                info["patch_error"] = str(e)[:80]
+        out[u["host"]] = info
+    UPDATE_CACHE.parent.mkdir(parents=True, exist_ok=True)
+    UPDATE_CACHE.write_text(json.dumps(cache))
+    return out
 
 
 def evaluate(scan, policy):
@@ -317,9 +437,19 @@ def evaluate(scan, policy):
 
     known = set(policy["match"]) | set(policy["compare"]) | set(policy["per_unit"])
     all_names = sorted(set().union(*[s.keys() for s in scans.values()])) if scans else []
+    for u in units:
+        u["drift_count"] = 0
+    by_host = {u["host"]: u for u in units}
+    for r in match_rows:
+        for h, c in r["cells"].items():
+            if c["status"] == "drift":
+                by_host[h]["drift_count"] += 1
     return {
-        "master": master, "policy": {"fpp_version": policy.get("fpp_version")},
+        "master": master, "policy": {"fpp_version": policy.get("fpp_version"),
+                                     "backup_max_age_days": policy.get("backup_max_age_days", 7)},
         "scanned": scan["scanned"], "units": units,
+        "releases": scan.get("releases"), "update_error": scan.get("update_error"),
+        "show": scan.get("show"), "inventory": scan.get("inventory"),
         "match": match_rows,
         "compare": role_rows(policy["compare"], "compare"),
         "other": role_rows([n for n in all_names if n not in known], "other"),

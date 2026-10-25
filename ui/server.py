@@ -162,7 +162,7 @@ def snapshots():
 
 
 def controllers():
-    found = fleet.discover(CONFIG["master"])
+    found = fleet.discover(CONFIG["master"], fleet.load_inventory())
     snaps = snapshots()
     for c in found:
         c.pop("base", None)
@@ -412,6 +412,43 @@ def act_fleet_policy_save(body):
     return fleet_report()
 
 
+def backups_by_host():
+    """Last backup per controller, and the last one that included media."""
+    out = {}
+    for sn in snapshots():
+        b = out.setdefault(sn["host"], {"last": None, "last_media": None, "count": 0})
+        b["count"] += 1
+        b["last"] = max(b["last"] or "", sn["taken"])
+        if sn["media"]:
+            b["last_media"] = max(b["last_media"] or "", sn["taken"])
+    return out
+
+
+def act_inventory(body):
+    """Add a controller to fleet-inventory.json (from the last scan) or remove one.
+    Edits the inventory file only."""
+    host, op = body.get("host", ""), body.get("op")
+    if not re.match(r"^[\w\-]+$", host) or op not in ("add", "remove"):
+        raise ValueError("bad request")
+    inv = fleet.load_inventory() or {"controllers": []}
+    rows = [c for c in inv["controllers"] if c["host"] != host]
+    if op == "add":
+        u = next((u for u in (_fleet["scan"] or {}).get("units", []) if u["host"] == host and u["online"]), None)
+        if not u:
+            raise ValueError(f"{host} is not online in the last scan")
+        rows.append({"host": host, "ip": u["ip"], "role": "player" if u.get("is_master") else "remote"})
+    inv["controllers"] = rows
+    fleet.save_inventory(inv)
+    if _fleet["scan"]:  # reflect it without a rescan
+        for u in _fleet["scan"]["units"]:
+            if u["host"] == host:
+                u["expected"] = op == "add"
+        _fleet["scan"]["inventory"] = True
+        if op == "remove":
+            _fleet["scan"]["units"] = [u for u in _fleet["scan"]["units"] if u["online"] or u["host"] != host]
+    return fleet_report()
+
+
 def act_fleet_restart(body):
     hosts = [h for h in body.get("hosts", []) if re.match(r"^[\w\-]+$", h)]
     if not hosts:
@@ -423,7 +460,8 @@ def act_fleet_restart(body):
 
 ACTIONS = {"snapshot": act_snapshot, "backup": act_backup, "download": act_download, "build": act_build, "flash": act_flash,
            "fleet/apply": act_fleet_apply, "fleet/expect": act_fleet_expect, "fleet/restart": act_fleet_restart,
-           "fleet/preview": act_fleet_preview, "fleet/policy": act_fleet_policy_save}
+           "fleet/preview": act_fleet_preview, "fleet/policy": act_fleet_policy_save,
+           "inventory": act_inventory}
 
 
 # ---------------------------------------------------------------- http
@@ -471,6 +509,9 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send(200, cards())
             if path == "/api/fleet":
                 return self.send(200, fleet_report(refresh="refresh=1" in self.path))
+            if path == "/api/dashboard":
+                return self.send(200, {"report": fleet_report(refresh="refresh=1" in self.path),
+                                       "backups": backups_by_host(), "now": time.time()})
             if path == "/api/fleet/policy":
                 policy = load_policy()
                 return self.send(200, {"policy": policy, "catalog": fleet.setting_catalog(_fleet["scan"], policy)

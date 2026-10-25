@@ -35,7 +35,8 @@ function showTab(name) {
   if (location.hash !== "#" + name) history.replaceState(null, "", "#" + name);
   document.querySelectorAll("nav button").forEach((b) => b.classList.toggle("active", b.dataset.tab === name));
   document.querySelectorAll("main section").forEach((s) => (s.hidden = s.id !== "tab-" + name));
-  ({ build: loadBuild, flash: loadFlash, jobs: loadJobs, fleet: () => FLEET ? renderFleet() : loadFleet(false) }[name] || (() => {}))();
+  ({ build: loadBuild, flash: loadFlash, jobs: loadJobs, fleet: () => FLEET ? renderFleet() : loadFleet(false),
+     dashboard: () => DASH ? renderDashboard() : loadDashboard(false) }[name] || (() => {}))();
 }
 document.querySelectorAll("nav button").forEach((b) => (b.onclick = () => showTab(b.dataset.tab)));
 // Sidebar groups remember whether they are open (a convenience; works without storage too).
@@ -241,6 +242,147 @@ function openJob(id) {
   });
 }
 
+// ------------------------------------------------------------ dashboard
+let DASH = null;
+// true when version a is newer than b, comparing numbers (10.10 > 10.3)
+const vNewer = (a, b) => {
+  const pa = String(a).match(/\d+/g) || [], pb = String(b).match(/\d+/g) || [];
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) { const d = (+pa[i] || 0) - (+pb[i] || 0); if (d) return d > 0; }
+  return false;
+};
+
+function updateTag(u) {
+  const up = u.update;
+  if (!u.online) return "";
+  if (!up) return '<span class="tag" title="Update check unavailable">?</span>';
+  const tags = [];
+  if (up.release_newer) tags.push(`<span class="tag warn" title="Newest FPP release">${esc(up.latest_release)} available</span>`);
+  if (up.patch_commits > 0) tags.push(`<span class="tag info" title="Newer commits on ${esc(u.branch)} than this unit runs">${up.patch_commits} patch${up.patch_commits > 1 ? "es" : ""}</span>`);
+  return tags.join(" ") || '<span class="tag ok">current</span>';
+}
+
+const takenMs = (t) => t ? Date.parse(t.replace(/^(\d{4})(\d\d)(\d\d)-(\d\d)(\d\d)(\d\d)$/, "$1-$2-$3T$4:$5:$6")) : null;
+function ago(ms) {
+  if (!ms) return "never";
+  const h = (Date.now() - ms) / 3.6e6;
+  return h < 1 ? "under an hour ago" : h < 24 ? `${Math.round(h)} h ago` : `${Math.round(h / 24)} day${Math.round(h / 24) === 1 ? "" : "s"} ago`;
+}
+
+async function loadDashboard(refresh) {
+  $("#dash-when").textContent = "Scanning every controller (about 20 seconds)…";
+  $("#dash-refresh").disabled = true;
+  try {
+    DASH = await api("/api/dashboard" + (refresh ? "?refresh=1" : ""));
+    FLEET = DASH.report; PREVIEW = false;
+    renderDashboard();
+  } catch (e) {
+    $("#dash-when").innerHTML = `<span class="bad">${esc(e.message)}</span>`;
+  } finally { $("#dash-refresh").disabled = false; }
+}
+$("#dash-refresh").onclick = () => loadDashboard(true);
+
+function renderDashboard() {
+  const R = DASH.report, units = R.units, B = DASH.backups;
+  const target = R.policy.fpp_version, maxAge = R.policy.backup_max_age_days || 7;
+  const online = units.filter((u) => u.online);
+  const expected = units.filter((u) => u.expected !== false);
+  const offline = expected.filter((u) => !u.online);
+  const unknown = online.filter((u) => u.expected === false);
+  const driftRows = R.match.filter((r) => r.drift);
+  const driftUnits = online.filter((u) => u.drift_count);
+  const behind = online.filter((u) => !u.version_ok);
+  const withUpdate = online.filter((u) => u.update && (u.update.release_newer || u.update.patch_commits > 0));
+  const lastMs = (h) => takenMs(B[h]?.last);
+  const never = expected.filter((u) => !B[u.host]);
+  const stale = expected.filter((u) => B[u.host] && Date.now() - lastMs(u.host) > maxAge * 864e5);
+  const clockBad = online.filter((u) => u.offset_s !== null && u.offset_s !== undefined && Math.abs(u.offset_s) > 2);
+  const lowDisk = online.filter((u) => u.disk_total && u.disk_free / u.disk_total < 0.15);
+  $("#dash-when").textContent = `Scanned ${new Date(R.scanned * 1000).toLocaleTimeString()}`;
+
+  const tile = (go, cls, k, n, sub) => `<button class="tile ${cls}" data-go="${go}"><span class="k">${k}</span><span class="n">${n}</span><span class="s">${sub}</span></button>`;
+  $("#dash-tiles").innerHTML = [
+    tile("controllers", offline.length ? "bad" : unknown.length ? "warn" : "", "Controllers online",
+         `${expected.filter((u) => u.online).length} / ${expected.length}`, `${offline.length} offline · ${unknown.length} unknown${R.inventory ? "" : " · no inventory"}`),
+    tile("fleet", driftRows.length ? "warn" : "", "Policy drift", driftRows.length ? `${driftRows.length} settings` : "none",
+         driftRows.length ? `on ${driftUnits.length} controller${driftUnits.length === 1 ? "" : "s"}` : "every controller matches"),
+    tile("build", behind.length ? "warn" : "", `On FPP ${esc(target)}`, `${online.length - behind.length} / ${online.length}`,
+         behind.length ? `${behind.length} behind: ${behind.map((u) => esc(u.host)).join(", ")}` : "all on the target"),
+    tile("fleet", withUpdate.length ? "warn" : "", "Updates available", withUpdate.length || "none",
+         R.releases?.latest ? `latest release ${esc(R.releases.latest)}` : esc(R.update_error ? "update check failed" : "")),
+    tile("controllers", never.length ? "bad" : stale.length ? "warn" : "", "Backups", never.length + stale.length ? `${never.length + stale.length} due` : "current",
+         `${never.length} never · ${stale.length} older than ${maxAge} days`),
+    tile("fleet", clockBad.length || lowDisk.length ? "warn" : "", "Health", clockBad.length + lowDisk.length || "ok",
+         `${clockBad.length} clock · ${lowDisk.length} low storage`),
+  ].join("");
+  document.querySelectorAll(".tile[data-go]").forEach((t) => (t.onclick = () => showTab(t.dataset.go)));
+
+  // needs attention
+  const items = [];
+  const add = (cls, html, go, label, extra) => items.push({ cls, html, go, label, extra });
+  offline.forEach((u) => add("bad", `<strong>${esc(u.host)}</strong> is offline (expected at ${esc(u.ip)}).`, "controllers", "Controllers",
+    `<button class="small" data-inv-remove="${esc(u.host)}" title="Remove from fleet-inventory.json">Not expected</button>`));
+  unknown.forEach((u) => add("warn", `<strong>${esc(u.host)}</strong> (${esc(u.ip)}) answers but isn't in the inventory.`, null, null,
+    `<button class="small" data-inv-add="${esc(u.host)}">Add to inventory</button>`));
+  if (never.length) add("bad", `Never backed up: ${never.map((u) => `<strong>${esc(u.host)}</strong>`).join(", ")}.`, "controllers", "Back up");
+  if (stale.length) add("warn", `Last backup older than ${maxAge} days: ${stale.map((u) => `${esc(u.host)} (${ago(lastMs(u.host))})`).join(", ")}.`, "controllers", "Back up");
+  if (behind.length) add("warn", `${behind.map((u) => `<strong>${esc(u.host)}</strong>`).join(", ")} run${behind.length === 1 ? "s" : ""} ${[...new Set(behind.map((u) => esc(u.version)))].join("/")}; the target is ${esc(target)}.`, "build", "Build card");
+  if (R.releases?.latest && target && vNewer(R.releases.latest, target))
+    add("warn", `FPP ${esc(R.releases.latest)} has been released; the policy targets ${esc(target)}.`, "fleet", "Fleet");
+  const patched = online.filter((u) => u.update?.patch_commits > 0);
+  if (patched.length) add("warn", `Newer commits on their branch: ${patched.map((u) => `${esc(u.host)} (${u.update.patch_commits} on ${esc(u.branch)})`).join(", ")}.`, "fleet", "Fleet");
+  if (driftRows.length) add("warn", `${driftRows.length} policy setting${driftRows.length === 1 ? "" : "s"} differ: ${driftRows.map((r) => esc(r.name)).join(", ")}.`, "fleet", "Fleet");
+  clockBad.forEach((u) => add("warn", `<strong>${esc(u.host)}</strong> clock is ${u.offset_s > 0 ? "+" : ""}${u.offset_s} s off.`, "fleet", "Fleet"));
+  lowDisk.forEach((u) => add("warn", `<strong>${esc(u.host)}</strong> has ${Math.round(100 * u.disk_free / u.disk_total)}% storage free.`, null, null));
+  if (R.update_error) add("warn", `Update check failed: ${esc(R.update_error)}`, null, null);
+  if (!R.inventory) add("warn", "No fleet-inventory.json yet, so offline controllers can't be detected.", null, null);
+  $("#dash-attention").innerHTML = items.length ? items.map((it) => `<li class="${it.cls}"><span>${it.html}</span><span class="row">${it.extra || ""}${it.go ? `<button class="small go" data-go="${it.go}">${it.label} →</button>` : ""}</span></li>`).join("")
+    : '<li class="ok"><span>Nothing needs attention.</span></li>';
+  $("#dash-attention").querySelectorAll("[data-go]").forEach((b) => (b.onclick = () => showTab(b.dataset.go)));
+  $("#dash-attention").querySelectorAll("[data-inv-add],[data-inv-remove]").forEach((b) => (b.onclick = () => inventory(b.dataset.invAdd || b.dataset.invRemove, b.dataset.invAdd ? "add" : "remove")));
+  const badge = $("#dash-badge");
+  const n = items.filter((i) => i.cls === "bad" || i.cls === "warn").length;
+  badge.hidden = !n; badge.textContent = n;
+
+  // show and releases
+  const sh = R.show;
+  $("#dash-show").innerHTML = !sh ? '<span class="bad">Player not reachable.</span>' :
+    (sh.status === "playing" ? `<div class="big good">Playing ${esc(sh.playlist || "")}</div><div class="muted">${esc(sh.sequence || "")}</div>`
+                             : `<div class="big">${esc(sh.status || "idle")}</div>`) +
+    (sh.next?.playlist ? `<div class="muted" style="margin-top:6px">Next: <strong>${esc(sh.next.playlist)}</strong><br>${esc(sh.next.start_time || "")}</div>` : "");
+  $("#dash-release").innerHTML = R.releases?.latest
+    ? `<div class="big">FPP ${esc(R.releases.latest)}</div><div class="muted">latest release, ${new Date(R.releases.published).toLocaleDateString()}</div><div class="muted" style="margin-top:6px">Policy target: <strong>${esc(target)}</strong></div>`
+    : `<span class="muted">${esc(R.update_error || "No release information.")}</span>`;
+
+  // controllers
+  $("#dash-units").innerHTML = `<thead><tr><th>Controller</th><th>Status</th><th>FPP</th><th>Update</th><th>Last backup</th><th>Drift</th><th>Clock</th><th>Storage</th><th>Uptime</th></tr></thead><tbody>` +
+    units.map((u) => {
+      const b = B[u.host], ms = lastMs(u.host);
+      const backupCls = !b ? "bad" : Date.now() - ms > maxAge * 864e5 ? "warn" : "";
+      const status = !u.online ? '<span class="tag bad">offline</span>' : u.expected === false ? '<span class="tag warn">unknown</span>'
+        : u.status === "playing" ? '<span class="tag info">playing</span>' : `<span class="tag ok">${esc(u.status || "online")}</span>`;
+      return `<tr class="${u.online ? "" : "offline"}">
+        <td><span class="dot ${!u.online ? "off" : u.status === "playing" ? "play" : "on"}"></span><strong>${esc(u.host)}</strong><span class="sub">${esc(u.role || "")} · ${esc(u.ip)}</span></td>
+        <td>${status}</td>
+        <td class="${u.online && !u.version_ok ? "bad" : ""}">${esc(u.version || "—")}</td>
+        <td>${updateTag(u)}</td>
+        <td class="${backupCls === "bad" ? "bad" : backupCls === "warn" ? "warn" : ""}">${ago(ms)}${b?.last_media ? `<span class="sub">media ${ago(takenMs(b.last_media))}</span>` : b ? '<span class="sub">no media yet</span>' : ""}</td>
+        <td>${!u.online ? "" : u.drift_count ? `<a href="#fleet" class="warn">${u.drift_count}</a>` : '<span class="good">0</span>'}</td>
+        <td class="${u.offset_s !== null && u.offset_s !== undefined && Math.abs(u.offset_s) > 2 ? "bad" : ""}">${u.online && u.offset_s !== null && u.offset_s !== undefined ? (u.offset_s > 0 ? "+" : "") + u.offset_s + " s" : ""}</td>
+        <td>${u.disk_total ? Math.round(100 * u.disk_free / u.disk_total) + "% free" : ""}</td>
+        <td>${esc(u.uptime || "")}</td></tr>`;
+    }).join("") + "</tbody>";
+}
+
+async function inventory(host, op) {
+  const msg = op === "add" ? `Add ${host} to fleet-inventory.json as an expected controller?`
+                           : `Remove ${host} from fleet-inventory.json? It will no longer be reported as offline.`;
+  if (!confirm(msg + "\n\nThis edits the inventory file only.")) return;
+  try {
+    DASH.report = FLEET = await api("/api/inventory", { host, op });
+    renderDashboard();
+  } catch (e) { toast(e.message); }
+}
+
 // ------------------------------------------------------------ fleet
 let FLEET = null;
 let PREVIEW = false;      // FLEET is a preview of an unsaved policy
@@ -287,10 +429,11 @@ function renderFleet() {
 
   // controllers
   const pct = (u) => u.disk_total ? Math.round(100 * u.disk_free / u.disk_total) + "% free" : "";
-  $("#fleet-units").innerHTML = `<thead><tr><th>Controller</th><th>FPP</th><th>Hardware</th><th>Address</th><th>Clock</th><th>Uptime</th><th>Storage</th></tr></thead><tbody>` +
-    units.map((u) => !u.online ? `<tr class="offline"><td><span class="dot off"></span><strong>${esc(u.host)}</strong></td><td colspan="6">offline · last known ${esc(u.ip)}</td></tr>` : `
-      <tr><td><span class="dot ${u.status === "playing" ? "play" : "on"}"></span><strong>${esc(u.host)}</strong><span class="sub">${esc(u.role)}${u.status ? " · " + esc(u.status) : ""}</span></td>
+  $("#fleet-units").innerHTML = `<thead><tr><th>Controller</th><th>FPP</th><th>Update</th><th>Hardware</th><th>Address</th><th>Clock</th><th>Uptime</th><th>Storage</th></tr></thead><tbody>` +
+    units.map((u) => !u.online ? `<tr class="offline"><td><span class="dot off"></span><strong>${esc(u.host)}</strong></td><td colspan="7">offline · expected at ${esc(u.ip)}</td></tr>` : `
+      <tr><td><span class="dot ${u.status === "playing" ? "play" : "on"}"></span><strong>${esc(u.host)}</strong>${u.expected === false ? ' <span class="tag warn">unknown</span>' : ""}<span class="sub">${esc(u.role)}${u.status ? " · " + esc(u.status) : ""}</span></td>
         <td class="${u.version_ok ? "" : "bad"}">${esc(u.version)}<span class="sub">${esc(u.os_version || "")}</span></td>
+        <td>${updateTag(u)}</td>
         <td>${esc(u.variant || u.platform || "")}${u.cape ? `<span class="sub">cape ${esc(u.cape)}</span>` : ""}</td>
         <td>${esc(u.ip)}${u.via ? `<span class="sub">via player</span>` : ""}</td>
         <td class="${u.offset_s !== null && Math.abs(u.offset_s) > 2 ? "bad" : ""}">${u.offset_s === null ? "?" : (u.offset_s > 0 ? "+" : "") + u.offset_s + " s"}<span class="sub">${esc((u.clock || "").replace(/^\w+ /, "").replace(/ \d{4}$/, ""))}</span></td>
@@ -579,5 +722,5 @@ $("#pol-discard").onclick = async () => {
 setInterval(() => { if (!$("#tab-jobs").hidden || !$("#jobs-badge").hidden) loadJobs(); }, 3000);
 loadControllers();
 const startTab = location.hash.slice(1);
-if (startTab && document.getElementById("tab-" + startTab)) showTab(startTab);
+showTab(startTab && document.getElementById("tab-" + startTab) ? startTab : "dashboard");
 loadJobs();

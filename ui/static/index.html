@@ -16,9 +16,12 @@
 <div class="layout">
 <aside class="sidebar">
   <nav>
+    <div class="nav-top">
+      <button data-tab="dashboard" class="active">Dashboard <span id="dash-badge" class="badge warn-badge" hidden></span></button>
+    </div>
     <details class="nav-group" data-group="backup" open>
       <summary>Backup</summary>
-      <button data-tab="controllers" class="active">Controllers</button>
+      <button data-tab="controllers">Controllers</button>
     </details>
     <details class="nav-group" data-group="fleet" open>
       <summary>Fleet Management</summary>
@@ -36,7 +39,30 @@
 </aside>
 
 <main>
-  <section id="tab-controllers">
+  <section id="tab-dashboard">
+    <div class="bar">
+      <h2 class="page-title">Dashboard</h2>
+      <div class="row"><span id="dash-when" class="muted small"></span><button id="dash-refresh">Rescan</button></div>
+    </div>
+    <div id="dash-tiles" class="tiles"><div class="muted">Scanning every controller (about 20 seconds)…</div></div>
+    <div class="dash-cols">
+      <div>
+        <h2 class="section">Needs attention</h2>
+        <ul id="dash-attention" class="attention"></ul>
+      </div>
+      <div>
+        <h2 class="section">Show</h2>
+        <div id="dash-show" class="card"></div>
+        <h2 class="section">Releases</h2>
+        <div id="dash-release" class="card"></div>
+      </div>
+    </div>
+    <h2 class="section">Controllers</h2>
+    <div class="table-wrap"><table id="dash-units"></table></div>
+    <p class="muted small">Expected controllers come from <code>fleet-inventory.json</code>: one listed there but not answering is <strong>offline</strong>; one answering but not listed is <strong>unknown</strong>.</p>
+  </section>
+
+  <section id="tab-controllers" hidden>
     <h2 class="page-title">Controllers</h2>
     <p class="muted small">Back up each controller's configuration, and optionally its media, to this Mac. Backing up only reads from the controllers. Backups contain passwords, so they stay on this Mac.</p>
     <div class="bar fleet-actions">

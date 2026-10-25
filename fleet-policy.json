@@ -81,12 +81,15 @@
     "MultiSyncMulticast": {
       "value": "0",
       "why": "Added from the Fleet page"
+    },
+    "bootDelay": {
+      "value": "0",
+      "why": "Added from the Fleet page"
     }
   },
   "compare": [
     "Service_smbd_nmbd",
     "Service_vsftpd",
-    "bootDelay",
     "MultiSyncCopySequences",
     "MultiSyncUnicast",
     "MultiSyncBroadcast",

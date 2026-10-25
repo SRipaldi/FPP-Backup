@@ -153,3 +153,31 @@ table.policy tr.changed td { background: color-mix(in srgb, var(--warn) 10%, tra
 .chip .x { border: none; background: none; padding: 0 0 0 6px; color: var(--muted); cursor: pointer; }
 .chip .x:hover { color: var(--danger); }
 .policy-buttons { margin: 16px 0 0; }
+/* dashboard */
+.nav-top { margin-bottom: 10px; padding-bottom: 10px; border-bottom: 1px solid var(--line); }
+.nav-top button { padding-left: 10px !important; }
+#tab-dashboard > .bar h2.page-title { margin: 0; }
+.tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 10px; margin: 12px 0 4px; }
+.tile { background: var(--panel); border: 1px solid var(--line); border-left: 4px solid var(--ok); border-radius: 8px;
+  padding: 12px 14px; cursor: pointer; text-align: left; color: var(--text); font: inherit; }
+.tile:hover { border-color: var(--accent); }
+.tile.warn { border-left-color: var(--warn); }
+.tile.bad { border-left-color: var(--danger); }
+.tile .k { display: block; font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+.tile .n { display: block; font-size: 26px; font-weight: 650; line-height: 1.2; margin: 4px 0 2px; }
+.tile .s { display: block; font-size: 12px; color: var(--muted); }
+.dash-cols { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); gap: 16px; }
+@media (max-width: 900px) { .dash-cols { grid-template-columns: 1fr; } }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px; }
+.card .big { font-size: 16px; font-weight: 600; }
+ul.attention { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+ul.attention li { background: var(--panel); border: 1px solid var(--line); border-left: 4px solid var(--warn); border-radius: 6px;
+  padding: 8px 12px; display: flex; gap: 10px; align-items: center; justify-content: space-between; }
+ul.attention li.bad { border-left-color: var(--danger); }
+ul.attention li.ok { border-left-color: var(--ok); }
+ul.attention li .go { white-space: nowrap; }
+.tag { display: inline-block; border-radius: 9px; padding: 0 7px; font-size: 12px; border: 1px solid var(--line); white-space: nowrap; }
+.tag.ok { color: var(--ok); border-color: var(--ok); }
+.tag.warn { color: var(--warn); border-color: var(--warn); }
+.tag.bad { color: var(--danger); border-color: var(--danger); }
+.tag.info { color: var(--accent); border-color: var(--accent); }
