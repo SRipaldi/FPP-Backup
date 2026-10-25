@@ -232,6 +232,28 @@ def act_snapshot(body):
     return start_job("snapshot", f"Snapshot {body.get('host', ip)}" + (" + media" if media else ""), [step])
 
 
+def act_backup(body):
+    """Snapshot several controllers in one job: one snapshot.py run per unit, in
+    turn, each with its own media choice; a failed unit does not stop the rest.
+    Read-only against the controllers."""
+    units = body.get("units") or []
+    if not units:
+        raise ValueError("no controllers selected")
+    steps, names = [], []
+    for u in units:
+        ip, via, host = u.get("ip", ""), u.get("via") or None, u.get("host", "")
+        if not re.match(r"^\d+\.\d+\.\d+\.\d+$", ip) or not re.match(r"^[\w\-]*$", host):
+            raise ValueError(f"bad controller: {host or ip}")
+        if via and via != CONFIG["master"]:
+            raise ValueError(f"{host}: unexpected proxy {via}")
+        step = [PY, TOOLS / "snapshot.py"] + (["--media"] if u.get("media") else [])
+        step += ["--via", via, ip] if via else [f"http://{ip}"]
+        steps.append(step)
+        names.append(host + (" + media" if u.get("media") else ""))
+    title = f"Back up {len(units)} controller(s): " + ", ".join(names)
+    return start_job("snapshot", title, steps, keep_going=True)
+
+
 def act_download(body):
     tag, asset = body["tag"], body["asset"]
     if not re.match(r"^[\w.\-]+$", tag) or not re.match(r"^[\w.\-]+\.img\.zip$", asset):
@@ -399,7 +421,7 @@ def act_fleet_restart(body):
                      exclusive="fleet", after=rescan_after)
 
 
-ACTIONS = {"snapshot": act_snapshot, "download": act_download, "build": act_build, "flash": act_flash,
+ACTIONS = {"snapshot": act_snapshot, "backup": act_backup, "download": act_download, "build": act_build, "flash": act_flash,
            "fleet/apply": act_fleet_apply, "fleet/expect": act_fleet_expect, "fleet/restart": act_fleet_restart,
            "fleet/preview": act_fleet_preview, "fleet/policy": act_fleet_policy_save}
 

@@ -17,10 +17,36 @@ header { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; pad
   background: var(--panel); border-bottom: 1px solid var(--line); position: sticky; top: 0; z-index: 2; }
 h1 { font-size: 17px; margin: 0; }
 h2 { font-size: 14px; margin: 0 0 8px; }
-nav { margin-left: auto; display: flex; gap: 4px; flex-wrap: wrap; }
-nav button { background: none; border-color: transparent; }
-nav button.active { background: var(--bg); border-color: var(--line); }
-main { padding: 20px; max-width: 1200px; margin: 0 auto; }
+/* layout: sidebar navigation + page */
+.layout { display: grid; grid-template-columns: 210px minmax(0, 1fr); align-items: start; }
+.sidebar { position: sticky; top: 49px; height: calc(100vh - 49px); overflow-y: auto; background: var(--panel);
+  border-right: 1px solid var(--line); }
+.sidebar nav { display: flex; flex-direction: column; min-height: 100%; padding: 12px 10px; box-sizing: border-box; }
+.nav-group { margin-bottom: 10px; }
+.nav-group summary { list-style: none; cursor: pointer; padding: 6px 8px; font-size: 11px; font-weight: 600;
+  text-transform: uppercase; letter-spacing: .05em; color: var(--muted); display: flex; align-items: center; gap: 6px; }
+.nav-group summary::-webkit-details-marker { display: none; }
+.nav-group summary::before { content: "▸"; font-size: 10px; transition: transform .15s; }
+.nav-group[open] summary::before { transform: rotate(90deg); }
+.sidebar nav button { display: flex; align-items: center; justify-content: space-between; width: 100%; text-align: left;
+  background: none; border-color: transparent; padding: 7px 10px 7px 22px; margin: 1px 0; }
+.sidebar nav button:hover { background: var(--bg); border-color: transparent; }
+.sidebar nav button.active { background: var(--bg); border-color: var(--line); font-weight: 600; }
+.nav-bottom { margin-top: auto; padding-top: 10px; border-top: 1px solid var(--line); }
+.nav-bottom button { padding-left: 10px !important; }
+main { padding: 20px 24px; max-width: 1300px; min-width: 0; }
+h2.page-title { font-size: 18px; margin: 0 0 6px; }
+th.media-col { white-space: nowrap; }
+@media (max-width: 800px) {
+  .layout { grid-template-columns: 1fr; }
+  .sidebar { position: static; height: auto; border-right: none; border-bottom: 1px solid var(--line); }
+  .sidebar nav { flex-direction: row; flex-wrap: wrap; gap: 4px 12px; min-height: 0; }
+  .nav-group { margin: 0; }
+  .nav-group summary { padding: 4px 6px; }
+  .sidebar nav button { width: auto; padding: 5px 10px; }
+  .nav-bottom { margin: 0; padding: 0; border: none; }
+  main { padding: 16px; }
+}
 .muted { color: var(--muted); }
 .note { color: var(--muted); margin: 6px 0 0; min-height: 1.4em; }
 .warn { color: var(--warn); }

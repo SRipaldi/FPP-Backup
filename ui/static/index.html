@@ -11,30 +11,56 @@
 <header>
   <h1>FPP Backup</h1>
   <span id="player" class="muted">connecting…</span>
-  <nav>
-    <button data-tab="controllers" class="active">Controllers</button>
-    <button data-tab="fleet">Fleet <span id="fleet-badge" class="badge warn-badge" hidden></span></button>
-    <button data-tab="build">Build card</button>
-    <button data-tab="flash">Flash card</button>
-    <button data-tab="jobs">Jobs <span id="jobs-badge" class="badge" hidden></span></button>
-  </nav>
 </header>
+
+<div class="layout">
+<aside class="sidebar">
+  <nav>
+    <details class="nav-group" data-group="backup" open>
+      <summary>Backup</summary>
+      <button data-tab="controllers" class="active">Controllers</button>
+    </details>
+    <details class="nav-group" data-group="fleet" open>
+      <summary>Fleet Management</summary>
+      <button data-tab="fleet">Fleet <span id="fleet-badge" class="badge warn-badge" hidden></span></button>
+    </details>
+    <details class="nav-group" data-group="image" open>
+      <summary>Image Management</summary>
+      <button data-tab="build">Build card</button>
+      <button data-tab="flash">Flash card</button>
+    </details>
+    <div class="nav-bottom">
+      <button data-tab="jobs">Jobs <span id="jobs-badge" class="badge" hidden></span></button>
+    </div>
+  </nav>
+</aside>
 
 <main>
   <section id="tab-controllers">
-    <div class="bar">
-      <p class="muted">Every action here only reads from controllers. Snapshots stay on this Mac (they contain passwords).</p>
+    <h2 class="page-title">Controllers</h2>
+    <p class="muted small">Back up each controller's configuration, and optionally its media, to this Mac. Backing up only reads from the controllers. Backups contain passwords, so they stay on this Mac.</p>
+    <div class="bar fleet-actions">
+      <div class="row">
+        <button id="backup-selected" class="primary" disabled>Back up selected</button>
+        <button id="backup-all">Back up all</button>
+      </div>
       <button id="refresh-controllers">Refresh</button>
     </div>
     <div class="table-wrap">
       <table>
-        <thead><tr><th>Controller</th><th>Hardware</th><th>FPP</th><th>Address</th><th>Last snapshot</th><th></th></tr></thead>
-        <tbody id="controllers"><tr><td colspan="6" class="muted">Loading from the player…</td></tr></tbody>
+        <thead><tr>
+          <th class="pick"><input type="checkbox" id="ctl-pick-all" title="Select every online controller"></th>
+          <th>Controller</th><th>Hardware</th><th>FPP</th><th>Address</th><th>Last backup</th>
+          <th class="pick media-col"><label class="inline" title="Include sequences, music and video for every selected controller"><input type="checkbox" id="ctl-media-all"> Media</label></th>
+        </tr></thead>
+        <tbody id="controllers"><tr><td colspan="7" class="muted">Loading from the player…</td></tr></tbody>
       </table>
     </div>
+    <p class="muted small">Media adds sequences, music and video; that can be hundreds of MB per controller, and is only needed to build a replacement card.</p>
   </section>
 
   <section id="tab-fleet" hidden>
+    <h2 class="page-title">Fleet</h2>
     <div class="bar">
       <p class="muted" id="fleet-when">Compares every controller with <code>fleet-policy.json</code>. Scanning reads only.</p>
       <button id="fleet-refresh">Rescan</button>
@@ -107,6 +133,7 @@
   </section>
 
   <section id="tab-build" hidden>
+    <h2 class="page-title">Build card</h2>
     <ol class="steps">
       <li>
         <h2>Snapshot to rebuild from</h2>
@@ -131,6 +158,7 @@
   </section>
 
   <section id="tab-flash" hidden>
+    <h2 class="page-title">Flash card</h2>
     <ol class="steps">
       <li>
         <h2>Image</h2>
@@ -152,6 +180,7 @@
   </section>
 
   <section id="tab-jobs" hidden>
+    <h2 class="page-title">Jobs</h2>
     <div class="jobs">
       <ul id="jobs-list"></ul>
       <div class="log-pane">
@@ -162,6 +191,7 @@
     </div>
   </section>
 </main>
+</div>
 
 <div id="toast" hidden></div>
 <script src="/app.js"></script>

@@ -30,38 +30,82 @@ async function act(path, body) {
 
 // ------------------------------------------------------------ tabs
 function showTab(name) {
+  const btn = document.querySelector(`nav button[data-tab="${name}"]`);
+  if (btn && btn.closest(".nav-group")) btn.closest(".nav-group").open = true;
   if (location.hash !== "#" + name) history.replaceState(null, "", "#" + name);
   document.querySelectorAll("nav button").forEach((b) => b.classList.toggle("active", b.dataset.tab === name));
   document.querySelectorAll("main section").forEach((s) => (s.hidden = s.id !== "tab-" + name));
   ({ build: loadBuild, flash: loadFlash, jobs: loadJobs, fleet: () => FLEET ? renderFleet() : loadFleet(false) }[name] || (() => {}))();
 }
 document.querySelectorAll("nav button").forEach((b) => (b.onclick = () => showTab(b.dataset.tab)));
+// Sidebar groups remember whether they are open (a convenience; works without storage too).
+document.querySelectorAll(".nav-group").forEach((g) => {
+  try { const v = localStorage.getItem("nav:" + g.dataset.group); if (v !== null) g.open = v === "1"; } catch {}
+  g.addEventListener("toggle", () => { try { localStorage.setItem("nav:" + g.dataset.group, g.open ? "1" : "0"); } catch {} });
+});
 
 // ------------------------------------------------------------ controllers
+let CONTROLLERS = [];
+
 async function loadControllers() {
   const body = $("#controllers");
+  // keep selections across a refresh
+  const kept = new Map([...document.querySelectorAll("#controllers tr[data-host]")].map((tr) =>
+    [tr.dataset.host, { pick: tr.querySelector("[data-f=pick]")?.checked, media: tr.querySelector("[data-f=media]")?.checked }]));
   try {
     const { master, controllers } = await api("/api/controllers");
+    CONTROLLERS = controllers;
     $("#player").textContent = `player ${master}`;
-    body.innerHTML = controllers.map((c) => `
-      <tr class="${c.online ? "" : "offline"}">
+    body.innerHTML = controllers.map((c) => {
+      const k = kept.get(c.host) || {};
+      return `
+      <tr class="${c.online ? "" : "offline"}" data-host="${esc(c.host)}">
+        <td class="pick">${c.online ? `<input type="checkbox" data-f="pick" ${k.pick ? "checked" : ""}>` : ""}</td>
         <td><strong>${esc(c.host)}</strong>${c.mode ? `<span class="sub">${esc(c.mode)}</span>` : ""}</td>
         <td>${esc(c.variant || "")}${c.cape ? `<span class="sub">cape ${esc(c.cape)}</span>` : ""}</td>
         <td>${c.online ? esc(c.version) : '<span class="bad">offline</span>'}</td>
         <td>${esc(c.ip)}${c.addresses.length > 1 ? `<span class="sub">${esc(c.addresses.filter((a) => a !== c.ip).join(", "))}</span>` : ""}</td>
         <td>${fmtTaken(c.last_snapshot)}${c.snapshots ? `<span class="sub">${c.snapshots} total</span>` : ""}</td>
-        <td class="actions">${c.online ? `
-          <button class="small" data-snap="${esc(c.ip)}" data-via="${esc(c.via || "")}" data-host="${esc(c.host)}">Snapshot</button>
-          <button class="small" data-snap="${esc(c.ip)}" data-via="${esc(c.via || "")}" data-host="${esc(c.host)}" data-media="1">+ media</button>` : ""}
-        </td>
-      </tr>`).join("");
-    body.querySelectorAll("[data-snap]").forEach((b) => (b.onclick = () =>
-      act("/api/snapshot", { ip: b.dataset.snap, via: b.dataset.via || null, host: b.dataset.host, media: !!b.dataset.media })));
+        <td class="pick">${c.online ? `<input type="checkbox" data-f="media" title="Include media for ${esc(c.host)}" ${k.media ? "checked" : ""}>` : ""}</td>
+      </tr>`;
+    }).join("");
+    body.querySelectorAll("input").forEach((i) => (i.onchange = syncBackupButtons));
   } catch (e) {
     $("#player").textContent = "player unreachable";
-    body.innerHTML = `<tr><td colspan="6" class="bad">${esc(e.message)}</td></tr>`;
+    body.innerHTML = `<tr><td colspan="7" class="bad">${esc(e.message)}</td></tr>`;
   }
+  syncBackupButtons();
 }
+
+const ctlRows = () => [...document.querySelectorAll("#controllers tr[data-host]")].filter((tr) => tr.querySelector("[data-f=pick]"));
+function syncBackupButtons() {
+  const rows = ctlRows(), picked = rows.filter((tr) => tr.querySelector("[data-f=pick]").checked);
+  const btn = $("#backup-selected");
+  btn.disabled = !picked.length;
+  btn.textContent = picked.length ? `Back up selected (${picked.length})` : "Back up selected";
+  $("#backup-all").disabled = !rows.length;
+  const all = $("#ctl-pick-all");
+  all.checked = picked.length && picked.length === rows.length;
+  all.indeterminate = picked.length > 0 && picked.length < rows.length;
+  const media = rows.filter((tr) => tr.querySelector("[data-f=media]").checked).length;
+  const mAll = $("#ctl-media-all");
+  mAll.checked = media && media === rows.length;
+  mAll.indeterminate = media > 0 && media < rows.length;
+}
+$("#ctl-pick-all").onchange = (e) => { ctlRows().forEach((tr) => (tr.querySelector("[data-f=pick]").checked = e.target.checked)); syncBackupButtons(); };
+$("#ctl-media-all").onchange = (e) => { ctlRows().forEach((tr) => (tr.querySelector("[data-f=media]").checked = e.target.checked)); syncBackupButtons(); };
+
+async function backUp(rows) {
+  const units = rows.map((tr) => {
+    const c = CONTROLLERS.find((x) => x.host === tr.dataset.host);
+    return { host: c.host, ip: c.ip, via: c.via || null, media: tr.querySelector("[data-f=media]").checked };
+  });
+  const withMedia = units.filter((u) => u.media).map((u) => u.host);
+  if (units.length > 1 && !confirm(`Back up ${units.length} controllers${withMedia.length ? `, with media for ${withMedia.join(", ")}` : " (configuration only)"}?\n\nThis only reads from the controllers.`)) return;
+  await act("/api/backup", { units });
+}
+$("#backup-selected").onclick = () => backUp(ctlRows().filter((tr) => tr.querySelector("[data-f=pick]").checked));
+$("#backup-all").onclick = () => backUp(ctlRows());
 $("#refresh-controllers").onclick = loadControllers;
 
 // ------------------------------------------------------------ build
@@ -193,6 +237,7 @@ function openJob(id) {
     const s = JSON.parse(e.data);
     prog.innerHTML = `<span class="${s === "done" ? "good" : "bad"}">${s === "done" ? "Finished" : "Failed"}</span>`;
     source.close(); source = null; loadJobs();
+    if (TITLES[id] && TITLES[id].startsWith("Back up")) loadControllers();
   });
 }
 
