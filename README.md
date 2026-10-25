@@ -30,6 +30,7 @@ Working and in use on an 11-controller show (Raspberry Pi 4, BeagleBone Black wi
 | [Rancher Desktop](https://rancherdesktop.io/) (dockerd / moby engine) | building card images | any Docker engine works; the tools look for Rancher's socket at `~/.rd/docker.sock` |
 | Rust (`cargo`), once | SD card detection | `tools/setup_bb_imager.sh` builds the BeagleBoard Imaging Utility's CLI |
 | An SD card reader | flashing | built-in or USB |
+| [xLights](https://xlights.org/) on this computer, with its automation port on | pushing missing sequences | xLights **Preferences**: set **xFade port** to **A** (port 49913) |
 
 ## Install
 
@@ -75,7 +76,10 @@ Every controller compared with the fleet policy. Red cells differ from the expec
 - The Controllers table shows each unit's FPP version, available updates (a newer release, and newer patches on its own branch), clock offset, uptime and storage.
 
 ### Fleet Management > Sequences
-Every sequence that a playlist in the player's schedule plays must be on every controller: a remote plays its own copy and stays dark if it is missing. The page shows what is missing where. Fix it with xLights' FPP Connect or FPP's file manager, then **Rescan**. Leave out controllers that aren't in the show by listing them under `coverage_exclude` in the policy.
+Every sequence that a playlist in the player's schedule plays must be on every controller: a remote plays its own copy and stays dark if it is missing. The page shows what is missing where. Tick the missing ones and press **Push checked**: xLights (running on this computer) uploads each one as FPP Connect would, cut down to the channels that controller drives (v2 zstd sparse); the player also gets the audio. The copy on the controller is then checked against the show folder's render (same render ID and frame count) and the page rescans.
+- A tag next to a missing sequence says when xLights can't push it as is: *not in show folder*, *not rendered*, or *render is old* (the .xsq was saved after its last render). Tick **Render first** to render it in xLights before uploading; controllers that already have the sequence keep the old render until they get the new one too.
+- Pushing is refused while the show is playing, and **Render first** is refused while xLights has a sequence open. xLights is busy until the push finishes: don't quit it, or this app, meanwhile.
+- You can still use FPP Connect or FPP's file manager instead; press **Rescan** afterwards. Leave out controllers that aren't in the show by listing them under `coverage_exclude` in the policy.
 
 ### Show > Live
 While a show plays, every 3 seconds: the player's playlist, sequence and position, and for each remote whether it is playing the same sequence at the same point and how many sync packets per second it receives from the player. Verdicts: *in sync*, *DARK*, *wrong sequence*, *ahead/behind*, *no sync packets*. Positions are whole seconds (FPP's resolution).
@@ -113,6 +117,8 @@ tools/stage_card.py snapshots/<host>/<ts> work/stage/<host> [--reference snapsho
 tools/build_image.sh work/images/<stock>.img work/stage/<host> work/out/<host>-<ver>.img
 tools/flash_card.py --list | work/out/<host>-<ver>.img <diskN>
 tools/verify_unit.py snapshots/<host>/<ts> --via <player-ip> <unit-ip> [--stage work/stage/<host>]
+tools/xlights.py status [<name>.fseq ...]                    # xLights version, show folder (read-only)
+tools/xlights.py push <name>.fseq --hosts a,b [--render]      # upload through xLights, verify
 ```
 
 `fleet.py` uses the player saved in `config/settings.json` unless given `--master`.
@@ -120,7 +126,7 @@ tools/verify_unit.py snapshots/<host>/<ts> --via <player-ip> <unit-ip> [--stage 
 ## Safety
 
 - **Reading** is the default. Backups, scans, coverage, the live view and the monitor only use HTTP GET requests that don't change anything.
-- **Writing** to controllers happens only when you ask, after a confirmation: Fleet **Update checked** / **Apply** (through FPP's own settings API) and player restarts. Restarts skip controllers that are playing.
+- **Writing** to controllers happens only when you ask, after a confirmation: Fleet **Update checked** / **Apply** (through FPP's own settings API), player restarts, and sequence pushes (through xLights). Restarts skip controllers that are playing; pushes wait until the show is not playing.
 - `snapshots/`, `work/` and `config/` are gitignored. Backups contain passwords and Wi-Fi keys: never commit them.
 - Flashing only targets disks listed as SD cards, refuses anything over 256 GB, requires typing the disk id, and verifies the card afterwards. The stock image is never modified.
 

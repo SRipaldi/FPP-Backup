@@ -41,6 +41,7 @@ PY = sys.executable
 sys.path.insert(0, str(TOOLS))
 import fleet  # noqa: E402
 import get_image  # noqa: E402
+import xlights  # noqa: E402
 
 TOKEN = secrets.token_urlsafe(24)
 CONFIG = {"master": None, "from_cli": False}  # the player; from config/settings.json unless --master
@@ -165,7 +166,7 @@ class Job:
             return
         if status == "failed":
             notify("bad", f"Failed: {self.title}" + (f" ({note})" if note else ""), "jobs")
-        elif self.kind in ("snapshot", "build", "flash", "fleet"):
+        elif self.kind in ("snapshot", "build", "flash", "fleet", "xlights"):
             notify("ok", f"Done: {self.title}", "jobs")
 
     def summary(self):
@@ -710,9 +711,45 @@ def act_fleet_restart(body):
                      exclusive="fleet", after=rescan_after)
 
 
+def xlights_view():
+    """xLights on this computer, and where each sequence the schedule needs is in
+    its show folder. Read-only."""
+    try:
+        st = xlights.status()
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+    names = ((_fleet["scan"] or {}).get("coverage") or {}).get("used_by") or {}
+    seqs = {}
+    for n in names:
+        loc = xlights.local_sequence(st["show"], n)
+        seqs[n] = None if not loc else {k: loc.get(k) for k in ("id", "frames", "stale")} | {
+            "rendered": bool(loc.get("fseq")), "xsq": Path(loc["xsq"]).name}
+    return {"ok": True, **st, "sequences": seqs}
+
+
+def act_xlights_push(body):
+    """Upload sequences to controllers through xLights: one step per sequence
+    (to all of its controllers), run in turn; a failed one does not stop the
+    rest. Ends with a rescan so the Sequences page shows the result."""
+    want = {}
+    for it in body.get("items", []):
+        seq, host = str(it.get("seq", "")), str(it.get("host", ""))
+        if not re.match(r"^[\w\-]+$", host) or not seq.endswith(".fseq") or "/" in seq or seq.startswith("."):
+            raise ValueError(f"bad item: {it}")
+        want.setdefault(seq, []).append(host)
+    if not want:
+        raise ValueError("nothing to push")
+    master = need_player()
+    steps = [[PY, TOOLS / "xlights.py", "--master", master, "push", seq, "--hosts", ",".join(hosts)]
+             + (["--render"] if body.get("render") else []) for seq, hosts in want.items()]
+    title = "; ".join(f"{seq} to {', '.join(hosts)}" for seq, hosts in want.items())
+    return start_job("xlights", f"Push via xLights: {title}"[:160], steps,
+                     exclusive="xlights", keep_going=True, after=rescan_after)
+
+
 ACTIONS = {"snapshot": act_snapshot, "backup": act_backup, "download": act_download, "build": act_build, "flash": act_flash,
            "fleet/apply": act_fleet_apply, "fleet/expect": act_fleet_expect, "fleet/restart": act_fleet_restart,
-           "fleet/preview": act_fleet_preview, "fleet/policy": act_fleet_policy_save,
+           "fleet/preview": act_fleet_preview, "xlights/push": act_xlights_push, "fleet/policy": act_fleet_policy_save,
            "inventory": act_inventory, "inventory/rebuild": act_inventory_rebuild,
            "settings": act_settings_save, "settings/test": act_settings_test,
            "notifications/read": lambda b: notes_mark(b.get("ids")) or {"ok": True},
@@ -766,6 +803,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send(200, fleet_report(refresh="refresh=1" in self.path))
             if path == "/api/settings":
                 return self.send(200, settings_view())
+            if path == "/api/xlights":
+                return self.send(200, xlights_view())
             if path == "/api/notifications":
                 items = sorted(_notes["items"], key=lambda n: -n["t"])
                 return self.send(200, {"unread": sum(not n["read"] for n in items), "items": items[:60]})

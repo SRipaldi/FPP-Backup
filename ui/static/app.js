@@ -404,24 +404,65 @@ async function loadSequences(refresh) {
   try { FLEET = await api("/api/fleet" + (refresh ? "?refresh=1" : "")); PREVIEW = false; renderSequences(); }
   catch (e) { $("#seq-when").innerHTML = `<span class="bad">${esc(e.message)}</span>`; }
 }
-$("#seq-refresh").onclick = () => loadSequences(true);
+$("#seq-refresh").onclick = () => { XL = null; loadSequences(true); };
+
+let XL = null;
+async function loadXlights() {
+  try { XL = await api("/api/xlights"); } catch (e) { XL = { ok: false, error: e.message }; }
+  renderSequences();
+}
+
+// Where a sequence stands in the xLights show folder, as a tag next to it.
+function xlTag(name) {
+  if (!XL?.ok) return "";
+  const l = XL.sequences?.[name];
+  if (l === undefined) return "";
+  if (!l) return ' <span class="tag bad" title="No .xsq with this name in the xLights show folder">not in show folder</span>';
+  if (!l.rendered) return ' <span class="tag warn" title="The .xsq has never been rendered: tick Render first">not rendered</span>';
+  if (l.stale) return ' <span class="tag warn" title="The .xsq was saved after its last render: tick Render first, or render it in xLights">render is old</span>';
+  return "";
+}
 
 function renderSequences() {
   const C = FLEET.coverage || {};
   $("#seq-when").textContent = C.checked ? `Checked ${new Date(C.checked * 1000).toLocaleTimeString()}` : "";
   if (C.error) { $("#seq-summary").innerHTML = `<span class="chip bad">${esc(C.error)}</span>`; $("#seq-units").innerHTML = ""; return; }
+  if (XL === null) { XL = false; loadXlights(); }
   const gaps = (C.units || []).filter((u) => u.missing?.length);
   const missing = gaps.reduce((n, u) => n + u.missing.length, 0);
   $("#seq-summary").innerHTML = `<span class="chip">Playlists checked: <strong>${(C.playlists || []).map(esc).join(", ") || "none"}</strong></span>
     <span class="chip"><strong>${C.needed || 0}</strong> sequences</span>
     <span class="chip ${missing ? "bad" : "ok"}"><strong>${missing}</strong> missing on ${gaps.length} controller${gaps.length === 1 ? "" : "s"}</span>` +
     (C.excluded?.length ? `<span class="chip">Excluded: ${C.excluded.map(esc).join(", ")}</span>` : "");
+  const canPush = !!XL?.ok;
+  $("#seq-xl").innerHTML = !XL ? "xLights: checking…" : XL.ok
+    ? `xLights ${esc(XL.version)} · show folder <code>${esc(XL.show)}</code>${XL.open ? ` · open: ${esc(XL.open)}` : ""}`
+    : `<span class="warn">xLights not available: ${esc(XL.error)}</span> <button class="small" id="seq-xl-retry">Retry</button>`;
+  if ($("#seq-xl-retry")) $("#seq-xl-retry").onclick = loadXlights;
+  $("#seq-push-bar").hidden = !missing;
   $("#seq-units").innerHTML = `<thead><tr><th>Controller</th><th>Sequences</th><th>Missing</th></tr></thead><tbody>` +
     (C.units || []).map((u) => `<tr><td><strong>${esc(u.host)}</strong><span class="sub">${esc(u.role || "")}</span></td>
       <td class="${u.error ? "bad" : u.missing?.length ? "bad" : "good"}">${u.error ? "error" : `${u.have} / ${C.needed}`}</td>
-      <td>${u.error ? esc(u.error) : u.missing.length ? u.missing.map((m) => `<div class="bad">${esc(m)}</div>`).join("") : '<span class="muted">none</span>'}</td></tr>`).join("") + "</tbody>";
+      <td>${u.error ? esc(u.error) : u.missing.length ? u.missing.map((m) => `<div><label class="inline bad"><input type="checkbox" class="seq-pick" data-host="${esc(u.host)}" data-seq="${esc(m)}" ${canPush ? "" : "disabled"}> ${esc(m)}</label>${xlTag(m)}</div>`).join("") : '<span class="muted">none</span>'}</td></tr>`).join("") + "</tbody>";
   const b = $("#seq-badge"); b.hidden = !missing; b.textContent = missing;
+  const sync = () => ($("#seq-push").disabled = !canPush || !document.querySelector(".seq-pick:checked"));
+  document.querySelectorAll(".seq-pick").forEach((c) => (c.onchange = sync));
+  sync();
 }
+
+$("#seq-push").onclick = () => {
+  const items = [...document.querySelectorAll(".seq-pick:checked")].map((c) => ({ seq: c.dataset.seq, host: c.dataset.host }));
+  if (!items.length) return;
+  const render = $("#seq-render").checked;
+  const stale = items.filter((i) => XL.sequences?.[i.seq] && (XL.sequences[i.seq].stale || !XL.sequences[i.seq].rendered));
+  if (stale.length && !render) return toast(`${stale[0].seq} needs a render first: tick Render first`);
+  if (render && XL.open) return toast(`xLights has ${XL.open} open; close it first`);
+  const lines = items.map((i) => `  ${i.seq} → ${i.host}`).join("\n");
+  if (!confirm(`Upload ${items.length} sequence file(s) through xLights?\n\n${lines}\n\n` +
+    (render ? "Each sequence is rendered first; controllers that already have it keep the old render until they get the new one.\n" : "") +
+    "This writes to the controllers. Not done while the show is playing. xLights is busy until it finishes; don't quit it or this app meanwhile.")) return;
+  act("/api/xlights/push", { items, render });
+};
 
 // ------------------------------------------------------------ live show
 let liveTimer = null;

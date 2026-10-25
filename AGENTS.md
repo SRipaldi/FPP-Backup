@@ -31,6 +31,7 @@ tools/build_image.sh  writes a stage into a COPY of a stock image in a container
 tools/flash_card.py   writes an image to an SD card via authopen, verifies by read-back
 tools/verify_unit.py  read-only check of a booted unit against its snapshot
 tools/get_image.py    FPP release images from GitHub
+tools/xlights.py      pushes sequences to controllers through xLights' automation API (FPP Connect)
 ```
 
 Pure vs network: `fleet.scan_fleet()` talks to controllers (about 30 s); `fleet.evaluate(scan, policy)` is pure and is re-run on every request, so policy edits and previews need no rescan. Keep that split.
@@ -65,6 +66,14 @@ The fleet is a real, running light show.
 - **Network**: 10.x moves `GATEWAY` from `interface.*` into `config/gateway` and applies it to every static interface. 10.x hides `interface.*` and `.htpasswd` from `/api/files/config`; read network config from `/api/network/interface/<if>`.
 - **Restart**: settings such as `TimeZone`, `Latitude`, `Locale` only take effect after an fppd restart (schema `restart: 2`).
 - **Status**: `/api/fppd/status` positions are whole seconds; `/api/fppd/multiSyncStats` on a remote counts sync packets from the player.
+
+## xLights automation
+
+`tools/xlights.py` drives the xLights running on this computer through `POST http://127.0.0.1:49913/xlDoAutomation` (enabled by Preferences > xFade port A; commands are documented in xLights' `documentation/xlDo Commands.txt`). `uploadSequence` with `format: v2stdsparse` is FPP Connect: xLights discovers the controller (remotes through the player's `/api/proxies`) and cuts the file to the channel ranges that controller reports.
+
+- **Never let a request time out early.** xLights can crash if the client disconnects before it replies; uploads and renders use a one-hour timeout.
+- `getVersion`, `getShowFolder` and `getOpenSequence` are read-only. `uploadSequence` writes to a controller, `batchRender` rewrites the .fseq: both need the user's OK. Don't run `xLights --version` to read the version: it launches a second copy; read the app's Info.plist instead.
+- Every copy of a render carries the render's ID (FSEQ v2 header bytes 24-31; `/api/sequence/<name>/meta` reports it as `ID`), so a controller's copy can be matched to the show folder's .fseq. FPP answers 404 on `meta` for a few seconds after an upload.
 
 ## macOS specifics
 
