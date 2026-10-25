@@ -9,6 +9,8 @@ Usage:
   tools/fleet.py audit [--master 172.1.2.10] [--json]
   tools/fleet.py set ntpServer master --hosts FPP-Side,FPP-Roof
   tools/fleet.py set Latitude <latitude> --hosts all
+  tools/fleet.py restart --hosts all          # fppd only; skips units that are playing
+  tools/fleet.py reboot --hosts FPP-Perm
 """
 import argparse
 import concurrent.futures
@@ -16,6 +18,7 @@ import json
 import re
 import sys
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 from datetime import datetime, timedelta, timezone
@@ -172,6 +175,37 @@ def cmd_set(args):
     sys.exit(1 if failed else 0)
 
 
+def cmd_restart(args):
+    """Restart fppd (or reboot) on named units, skipping any that are playing."""
+    units = [u for u in discover(args.master) if u["online"]]
+    wanted = None if args.hosts == "all" else set(args.hosts.split(","))
+    targets = [u for u in units if wanted is None or u["host"] in wanted]
+    path = "api/system/reboot" if args.cmd == "reboot" else "api/system/fppd/restart"
+    failed = 0
+    for u in targets:
+        try:
+            state = fetch_json(f"{u['base']}/api/fppd/status").get("status_name")
+        except Exception as e:
+            print(f"FAIL {u['host']:12} status: {e}")
+            failed += 1
+            continue
+        if state != "idle" and not args.force:
+            print(f"SKIP {u['host']:12} is {state}; not interrupting it (use --force)")
+            continue
+        try:
+            try:
+                fetch(f"{u['base']}/{path}", timeout=30, method="POST", data=b"")
+            except urllib.error.HTTPError as e:
+                if e.code not in (404, 405):
+                    raise
+                fetch(f"{u['base']}/{path}", timeout=30)  # FPP 8.x: GET only
+            print(f"OK   {u['host']:12} {args.cmd} sent")
+        except Exception as e:
+            print(f"FAIL {u['host']:12} {e}")
+            failed += 1
+    sys.exit(1 if failed else 0)
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -184,8 +218,12 @@ def main():
     s.add_argument("value", help='value, or "master" for the player address on each unit\'s subnet')
     s.add_argument("--hosts", required=True, help='comma-separated hostnames, or "all"')
     s.add_argument("--skip-master", action="store_true")
+    for name in ("restart", "reboot"):
+        r = sub.add_parser(name, help=f"{'restart fppd' if name == 'restart' else 'reboot the OS'} on idle units")
+        r.add_argument("--hosts", required=True, help='comma-separated hostnames, or "all"')
+        r.add_argument("--force", action="store_true", help="also units that are playing")
     args = ap.parse_args()
-    {"audit": cmd_audit, "set": cmd_set}[args.cmd](args)
+    {"audit": cmd_audit, "set": cmd_set, "restart": cmd_restart, "reboot": cmd_restart}[args.cmd](args)
 
 
 if __name__ == "__main__":
