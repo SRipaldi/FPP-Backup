@@ -484,7 +484,10 @@ async function loadSettings() {
   $("#set-inv").innerHTML = !SETTINGS.inventory ? '<span class="warn">No inventory yet.</span>'
     : `${SETTINGS.inventory_count} controller${SETTINGS.inventory_count === 1 ? "" : "s"} in <code>${esc(SETTINGS.files.inventory)}</code>.`;
   $("#set-inv-build").disabled = !SETTINGS.active_player;
-  $("#set-files").innerHTML = `Saved in <code>${esc(SETTINGS.files.settings)}</code> (this computer only; not in Git).`;
+  $("#set-pol").innerHTML = SETTINGS.policy
+    ? `In <code>${esc(SETTINGS.files.policy)}</code>. Edit it on the Fleet page (<strong>Edit policy</strong>).`
+    : "Not created yet. On the first scan it is created from <code>templates/fleet-policy.json</code>, with every value taken from your player's own settings, so your fleet starts out matching its player.";
+  $("#set-files").innerHTML = `Settings, inventory and policy are saved in <code>config/</code>: this computer only, not in Git.`;
   $("#set-test-result").textContent = SETTINGS.active_player ? `Active player: ${SETTINGS.active_player}` : "";
 }
 

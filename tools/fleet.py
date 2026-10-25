@@ -7,7 +7,7 @@ chrony.conf and restarts chrony), and only on the hosts named.
 
 Usage:
   tools/fleet.py audit [--master <player-ip>] [--json]   # player defaults to config/settings.json
-  tools/fleet.py drift [--json]               # every unit vs fleet-policy.json
+  tools/fleet.py drift [--json]               # every unit vs config/fleet-policy.json
   tools/fleet.py set ntpServer master --hosts FPP-Side,FPP-Roof
   tools/fleet.py set Latitude <latitude> --hosts all
   tools/fleet.py restart --hosts all          # fppd only; skips units that are playing
@@ -93,7 +93,7 @@ def fetch_json(url, timeout=6, tries=3):
             time.sleep(1)
 
 
-INVENTORY = ROOT / "fleet-inventory.json"
+INVENTORY = ROOT / "config/fleet-inventory.json"
 
 
 def load_inventory(path=INVENTORY):
@@ -237,7 +237,40 @@ def ntp_for(u, units, master):
     return next((a for a in m["addresses"] if a.rsplit(".", 1)[0] == net), master)
 
 
-POLICY = ROOT / "fleet-policy.json"
+POLICY = ROOT / "config/fleet-policy.json"   # per installation (gitignored)
+POLICY_TEMPLATE = ROOT / "templates/fleet-policy.json"
+
+
+def create_policy(master, path=POLICY):
+    """Write a policy from the template, filling '@player' values from the
+    player's own settings (and fpp_version from its version), so a new fleet
+    starts out matching its player. Read-only against the player."""
+    tpl = json.loads(POLICY_TEMPLATE.read_text())
+    info = fetch_json(f"http://{master}/api/system/info", timeout=8)
+    schema = fetch_json(f"http://{master}/api/settings", timeout=20).get("settings", {})
+    if tpl.get("fpp_version") == "@player":
+        tpl["fpp_version"] = info.get("Version", "")
+    for name, rule in list(tpl["match"].items()):
+        if rule.get("value") != "@player":
+            continue
+        try:
+            entry = fetch_json(f"http://{master}/api/settings/{urllib.parse.quote(name)}", timeout=8)
+        except Exception:
+            entry = None
+        if not entry or name not in schema:
+            del tpl["match"][name]  # this FPP version doesn't have it
+            continue
+        meta = schema[name]
+        default = meta.get("default")
+        if default is None and meta.get("type") == "select" and isinstance(meta.get("options"), dict):
+            default = next((v for label, v in meta["options"].items() if "(Default)" in str(label)), None)
+        rule["value"] = effective({"value": entry.get("value"), "default": default, "type": meta.get("type")})
+    tpl["_comment"] = (f"Created from templates/fleet-policy.json using {info.get('HostName', master)}'s settings. "
+                       "Edit it on the Fleet page (Edit policy).")
+    policy = validate_policy(tpl)
+    Path(path).parent.mkdir(parents=True, exist_ok=True)
+    Path(path).write_text(json.dumps(policy, indent=2) + "\n")
+    return policy
 
 
 def effective(entry):
@@ -701,7 +734,7 @@ def main():
     sub = ap.add_subparsers(dest="cmd", required=True)
     a = sub.add_parser("audit")
     a.add_argument("--json", action="store_true")
-    dr = sub.add_parser("drift", help="compare every unit with fleet-policy.json (read-only)")
+    dr = sub.add_parser("drift", help="compare every unit with config/fleet-policy.json (read-only)")
     dr.add_argument("--json", action="store_true")
     s = sub.add_parser("set")
     s.add_argument("name")
@@ -715,6 +748,9 @@ def main():
     args = ap.parse_args()
     if not args.master:
         sys.exit("no player configured: pass --master <ip> or set it on the UI's Settings page")
+    if args.cmd == "drift" and not POLICY.exists():
+        create_policy(args.master)
+        print(f"Created {POLICY.relative_to(ROOT)} from the template using the player's settings.", file=sys.stderr)
     {"audit": cmd_audit, "drift": cmd_drift, "set": cmd_set, "restart": cmd_restart,
      "reboot": cmd_restart}[args.cmd](args)
 

@@ -1,10 +1,9 @@
 {
-  "_comment": "Fleet configuration policy, read by tools/fleet.py drift and the UI's Fleet tab. 'match' settings must have the expected value on every unit (or role); 'compare' settings are only flagged when units in the same role disagree. '@master' means the player's address on the unit's own subnet; master_value applies to the player itself. Values are compared after an unset setting falls back to its schema default.",
-  "master": "172.1.2.10",
-  "fpp_version": "10.3",
+  "_comment": "Template for config/fleet-policy.json, used when an installation has none. '@player' values are replaced with the player's own setting when the policy is created, so a new fleet starts out matching its player. Edit the result on the Fleet page.",
+  "fpp_version": "@player",
   "match": {
     "TimeZone": {
-      "value": "America/Los_Angeles",
+      "value": "@player",
       "why": "Same clock everywhere (US/Pacific is missing on 10.x images)"
     },
     "ntpServer": {
@@ -13,92 +12,73 @@
       "why": "Remotes sync time from the player; the player from the internet pool"
     },
     "Latitude": {
-      "value": "<latitude>",
+      "value": "@player",
       "why": "Sunrise/sunset schedule times"
     },
     "Longitude": {
-      "value": "<longitude>",
+      "value": "@player",
       "why": "Sunrise/sunset schedule times"
     },
     "Locale": {
-      "value": "USA",
+      "value": "@player",
       "why": "Holiday list used by schedules"
     },
     "temperatureInF": {
-      "value": "1",
+      "value": "@player",
       "why": "Display units"
     },
     "LegalJurisdiction": {
-      "value": "US",
+      "value": "@player",
       "min_version": 10,
       "why": "10.x setup page"
     },
     "statsPublish": {
-      "value": "Disabled",
+      "value": "@player",
       "why": "Privacy"
     },
     "ShareCrashData": {
-      "value": "0",
+      "value": "@player",
       "why": "Privacy"
     },
     "FetchVendorLogos": {
-      "value": "0",
+      "value": "@player",
       "why": "Privacy"
     },
     "SendVendorSerial": {
-      "value": "0",
+      "value": "@player",
       "why": "Privacy"
     },
     "passwordEnable": {
-      "value": "0",
+      "value": "@player",
       "why": "Same UI access everywhere"
     },
     "osPasswordEnable": {
-      "value": "0",
+      "value": "@player",
       "why": "Same OS access everywhere"
     },
     "uiLevel": {
-      "value": "3",
+      "value": "@player",
       "why": "Same UI options everywhere"
-    },
-    "verbosePlaylistItemDetails": {
-      "value": "0",
-      "player": "1",
-      "why": "Added from the Fleet page"
-    },
-    "Service_rsync": {
-      "value": "1",
-      "why": "Added from the Fleet page"
-    },
-    "blankBetweenSequences": {
-      "value": "1",
-      "why": "Added from the Fleet page"
-    },
-    "MultiSyncRefreshStatus": {
-      "value": "1",
-      "why": "Added from the Fleet page"
-    },
-    "MultiSyncMulticast": {
-      "value": "0",
-      "why": "Added from the Fleet page"
-    },
-    "bootDelay": {
-      "value": "0",
-      "why": "Added from the Fleet page"
     }
   },
   "compare": [
+    "Service_rsync",
     "Service_smbd_nmbd",
     "Service_vsftpd",
+    "bootDelay",
+    "blankBetweenSequences",
     "MultiSyncCopySequences",
+    "MultiSyncMulticast",
     "MultiSyncUnicast",
     "MultiSyncBroadcast",
+    "MultiSyncRefreshStatus",
     "AutoEnableOutputs",
     "alwaysTransmit",
     "MediaBackend",
     "LogLevel_General",
     "ScheduleSeconds",
-    "DisableScheduler"
+    "DisableScheduler",
+    "verbosePlaylistItemDetails"
   ],
   "per_unit": [
     "HostName",
@@ -125,5 +105,6 @@
     "UnpartitionedSpace",
     "LastBlock"
   ],
+  "coverage_exclude": [],
   "secret_pattern": "pass|psk|secret|token|key|MQTTUsername|MQTTHost|email"
 }

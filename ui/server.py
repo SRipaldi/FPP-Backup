@@ -499,6 +499,12 @@ def monitor_loop():
 
 
 def load_policy():
+    """The installation's policy; created from the template, using the player's
+    own settings, the first time it is needed."""
+    if not fleet.POLICY.exists():
+        fleet.create_policy(need_player())
+        notify("info", "Created the fleet policy from the template using your player's settings. Review it on the Fleet page.",
+               "fleet", key="policy-created")
     return fleet.load_policy()
 
 
@@ -659,6 +665,7 @@ def settings_view():
     inv = fleet.load_inventory()
     return {"settings": fleet.load_settings(), "active_player": CONFIG["master"], "from_cli": CONFIG["from_cli"],
             "inventory_count": len((inv or {}).get("controllers", [])), "inventory": inv is not None,
+            "policy": fleet.POLICY.exists(),
             "files": {"settings": str(fleet.SETTINGS.relative_to(ROOT)), "inventory": str(fleet.INVENTORY.relative_to(ROOT)),
                       "policy": str(fleet.POLICY.relative_to(ROOT))}}
 

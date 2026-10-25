@@ -18,11 +18,11 @@ python3 ui/server.py
 
 Opens `http://127.0.0.1:8765/`. Start it from Terminal or VS Code so the macOS admin dialog can appear when flashing. Options: `--port`, `--no-browser`, `--no-monitor`, and `--master <player-ip>` to override the saved player for one run.
 
-**First run:** the app opens on **Settings**. Enter the address of your FPP *player* (the controller that runs the show; every other controller is reached through its `/proxy/` and found through MultiSync), press **Test connection**, save, then **Build inventory from the player**. Settings are saved in `config/settings.json`, which is per computer and not in Git.
+**First run:** the app opens on **Settings**. Enter the address of your FPP *player* (the controller that runs the show; every other controller is reached through its `/proxy/` and found through MultiSync), press **Test connection**, save, then **Build inventory from the player**. Settings, the controller inventory and the fleet policy are saved in `config/` (`settings.json`, `fleet-inventory.json`, `fleet-policy.json`): per computer and not in Git, so the repo holds no site addresses. The policy is created on the first scan from `templates/fleet-policy.json`, with each value taken from your player's own settings.
 
 - **Dashboard**: controllers online vs expected, policy drift, versions and available updates, backups due, sequence coverage, the show, and what needs attention.
 - **Backup > Controllers**: back up the selected controllers (configuration, optionally media).
-- **Fleet Management > Fleet**: compare every controller with `fleet-policy.json`, edit the policy, update drifting settings. **Sequences**: every sequence the schedule plays must be on every controller.
+- **Fleet Management > Fleet**: compare every controller with the fleet policy, edit the policy, update drifting settings. **Sequences**: every sequence the schedule plays must be on every controller.
 - **Show > Live**: during a show, whether each remote plays the same sequence at the same point and receives the player's sync.
 - **Image Management**: build a card image from a backup, flash and verify an SD card.
 - **Notifications** (bell): controllers going offline, dark remotes during a show, failed jobs, drift, missing sequences, new releases.
