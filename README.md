@@ -10,6 +10,8 @@ Back up, monitor and rebuild the controllers of an [FPP (Falcon Player)](https:/
 
 Everything runs locally: a small web UI in your browser and the command-line tools behind it.
 
+Not affiliated with or endorsed by the Falcon Player (FPP) project. "FPP" and "Falcon Player" refer to that project's software.
+
 ## Status
 
 Working and in use on an 11-controller show (Raspberry Pi 4, BeagleBone Black with KulpLights capes, PocketBeagle 2; FPP 8.5.1 and 10.3).
@@ -152,3 +154,7 @@ work/                         images, staging, builds, caches, logs (gitignored)
 ```
 
 See [AGENTS.md](AGENTS.md) for development and setup notes for AI coding agents, and [FPP-Backup-handoff.md](FPP-Backup-handoff.md) for the original plan.
+
+## License
+
+[MIT](LICENSE). This repository contains no FPP code. FPP itself is licensed separately (LGPL 2.1, GPL v2 and CC-BY-ND for different parts; see the [FPP repository](https://github.com/FalconChristmas/fpp/blob/master/LICENSE)), and card images this tool builds contain FPP, so don't publish built `.img` files (they also hold your passwords). `tools/setup_bb_imager.sh` downloads and builds the MIT-licensed [BeagleBoard Imaging Utility](https://github.com/beagleboard/bb-imager-rs); if you redistribute a built copy, include its license.
