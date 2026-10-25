@@ -11,6 +11,17 @@
 <header>
   <h1>FPP Backup</h1>
   <span id="player" class="muted">connecting…</span>
+  <div class="bell-wrap">
+    <button id="bell" class="bell" title="Notifications" aria-label="Notifications">
+      <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path fill="currentColor" d="M12 22a2.5 2.5 0 0 0 2.45-2h-4.9A2.5 2.5 0 0 0 12 22Zm7-6V11a7 7 0 0 0-5.5-6.84V3.5a1.5 1.5 0 0 0-3 0v.66A7 7 0 0 0 5 11v5l-2 2v1h18v-1l-2-2Z"/></svg>
+      <span id="bell-count" class="bell-count" hidden></span>
+    </button>
+    <div id="bell-panel" class="bell-panel" hidden>
+      <div class="bell-head"><strong>Notifications</strong>
+        <span class="row"><button class="small" id="bell-read">Mark all read</button><button class="small" id="bell-clear">Clear</button></span></div>
+      <ul id="bell-list"></ul>
+    </div>
+  </div>
 </header>
 
 <div class="layout">
@@ -26,6 +37,11 @@
     <details class="nav-group" data-group="fleet" open>
       <summary>Fleet Management</summary>
       <button data-tab="fleet">Fleet <span id="fleet-badge" class="badge warn-badge" hidden></span></button>
+      <button data-tab="sequences">Sequences <span id="seq-badge" class="badge warn-badge" hidden></span></button>
+    </details>
+    <details class="nav-group" data-group="show" open>
+      <summary>Show</summary>
+      <button data-tab="show">Live <span id="live-dot" class="live-dot" hidden></span></button>
     </details>
     <details class="nav-group" data-group="image" open>
       <summary>Image Management</summary>
@@ -156,6 +172,26 @@
       <summary>Different by design <span class="muted small">identity and hardware, never flagged</span></summary>
       <div class="table-wrap"><table id="fleet-perunit" class="grid"></table></div>
     </details>
+  </section>
+
+  <section id="tab-sequences" hidden>
+    <div class="bar">
+      <h2 class="page-title">Sequences</h2>
+      <div class="row"><span id="seq-when" class="muted small"></span><button id="seq-refresh">Rescan</button></div>
+    </div>
+    <p class="muted small">Every sequence a scheduled playlist plays must be on every controller: a remote plays its own copy, and stays dark if the file is missing. Copy missing files with xLights' FPP Connect (or FPP's file manager). Exclude a controller that isn't part of the show by adding it to <code>coverage_exclude</code> in <code>fleet-policy.json</code>.</p>
+    <div id="seq-summary" class="chips"></div>
+    <div class="table-wrap"><table id="seq-units"></table></div>
+  </section>
+
+  <section id="tab-show" hidden>
+    <div class="bar">
+      <h2 class="page-title">Live show</h2>
+      <span id="live-when" class="muted small"></span>
+    </div>
+    <p class="muted small">Every 3 seconds: what the player is playing, and whether each remote is playing the same sequence at the same point and receiving the player's sync packets. Positions are whole seconds (that is what FPP reports), so a 1 s difference is normal. Read-only.</p>
+    <div id="live-player" class="card live-player"></div>
+    <div class="table-wrap"><table id="live-units"></table></div>
   </section>
 
   <section id="tab-build" hidden>

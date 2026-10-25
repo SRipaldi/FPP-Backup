@@ -15,6 +15,7 @@ the macOS admin dialog, which needs your login session.
 Usage: python3 ui/server.py [--master 172.1.2.10] [--port 8765] [--no-browser]
 """
 import argparse
+import concurrent.futures
 import json
 import os
 import re
@@ -45,6 +46,43 @@ CONFIG = {"master": "172.1.2.10"}
 
 
 # ---------------------------------------------------------------- jobs
+
+# ---------------------------------------------------------------- notifications
+
+NOTES_FILE = ROOT / "work/notifications.json"
+_notes = {"items": [], "lock": threading.Lock()}
+
+
+def _load_notes():
+    try:
+        _notes["items"] = json.loads(NOTES_FILE.read_text())
+    except (FileNotFoundError, ValueError):
+        _notes["items"] = []
+
+
+def notify(level, text, link=None, key=None, quiet_s=3600):
+    """Record a notification (level: bad / warn / ok / info). A key suppresses a
+    repeat of the same unread notice within quiet_s seconds."""
+    with _notes["lock"]:
+        now = time.time()
+        if key and any(n.get("key") == key and not n["read"] and now - n["t"] < quiet_s for n in _notes["items"]):
+            return
+        _notes["items"].append({"id": secrets.token_hex(4), "t": now, "level": level, "text": text,
+                                "link": link, "key": key, "read": False})
+        _notes["items"] = _notes["items"][-200:]
+        NOTES_FILE.parent.mkdir(parents=True, exist_ok=True)
+        NOTES_FILE.write_text(json.dumps(_notes["items"]))
+
+
+def notes_mark(ids=None, clear=False):
+    with _notes["lock"]:
+        if clear:
+            _notes["items"] = []
+        for n in _notes["items"]:
+            if ids is None or n["id"] in ids:
+                n["read"] = True
+        NOTES_FILE.write_text(json.dumps(_notes["items"]))
+
 
 class Job:
     def __init__(self, kind, title, steps, keep_going=False, after=None):
@@ -116,6 +154,12 @@ class Job:
                 self.lines.append(f"[{status}] {note}")
             self.status, self.ended = status, time.time()
             self.cond.notify_all()
+        if self.kind == "test":
+            return
+        if status == "failed":
+            notify("bad", f"Failed: {self.title}" + (f" ({note})" if note else ""), "jobs")
+        elif self.kind in ("snapshot", "build", "flash", "fleet"):
+            notify("ok", f"Done: {self.title}", "jobs")
 
     def summary(self):
         return {"id": self.id, "kind": self.kind, "title": self.title, "status": self.status,
@@ -300,11 +344,133 @@ def fleet_report(refresh=False):
     five minutes; the policy is re-evaluated on every call, which is instant, so
     policy edits show up without rescanning."""
     with _fleet["lock"]:
-        if refresh or _fleet["scan"] is None or time.time() - _fleet["t"] > 300:
+        rescanned = refresh or _fleet["scan"] is None or time.time() - _fleet["t"] > 300
+        if rescanned:
             _fleet["scan"] = fleet.scan_fleet(CONFIG["master"])
             _fleet["t"] = time.time()
+        prev = _fleet["data"]
         _fleet["data"] = fleet.evaluate(_fleet["scan"], load_policy())
+        if rescanned:
+            scan_notices(prev, _fleet["data"])
         return _fleet["data"]
+
+
+def scan_notices(prev, rep):
+    """Notify what a full scan found that the previous one did not."""
+    old_drift = {r["name"] for r in (prev or {}).get("match", []) if r["drift"]}
+    for r in rep["match"]:
+        if r["drift"] and r["name"] not in old_drift:
+            hosts = [h for h, c in r["cells"].items() if c["status"] == "drift"]
+            notify("warn", f"Policy drift: {r['name']} differs on {', '.join(hosts)}", "fleet", key=f"drift:{r['name']}")
+    cov = rep.get("coverage") or {}
+    for u in cov.get("units", []):
+        for seq in u.get("missing", []):
+            used = (cov.get("used_by") or {}).get(seq) or cov.get("playlists", [])
+            notify("bad", f"{u['host']} is missing {seq}, used by {', '.join(used)}. It will be dark for that sequence.",
+                   "sequences", key=f"cov:{u['host']}:{seq}", quiet_s=86400)
+    latest = (rep.get("releases") or {}).get("latest")
+    if latest and fleet._vkey(latest) > fleet._vkey(rep["policy"].get("fpp_version")):
+        notify("info", f"FPP {latest} has been released (the policy targets {rep['policy']['fpp_version']})",
+               "dashboard", key=f"release:{latest}", quiet_s=7 * 86400)
+
+
+# ---------------------------------------------------------------- monitor
+
+_mon = {"online": None, "misses": {}, "show": None, "last": None}
+
+
+def live_status():
+    """Every online unit's playback state and how many sync packets it has had
+    from the player, for the live show view and the monitor. Read-only."""
+    scan = _fleet["scan"]
+    units = [u for u in (scan["units"] if scan else fleet.discover(CONFIG["master"], fleet.load_inventory())) if u.get("online")]
+    master = CONFIG["master"]
+    player = next((u for u in units if u.get("is_master")), None)
+    player_addrs = set((player or {}).get("addresses", [])) | {master}
+
+    def one(u):
+        base = f"http://{master}" if u.get("is_master") else (
+            f"http://{u['via']}/proxy/{u['ip']}" if u.get("via") else f"http://{u['ip']}")
+        out = {"host": u["host"], "role": "player" if u.get("is_master") else "remote", "ip": u["ip"]}
+        try:
+            st = fleet.fetch_json(f"{base}/api/fppd/status", timeout=4, tries=2)
+            out.update(status=st.get("status_name"), sequence=st.get("current_sequence") or "",
+                       seconds=int(st.get("seconds_played") or 0), remaining=int(st.get("seconds_remaining") or 0),
+                       playlist=(st.get("current_playlist") or {}).get("playlist"), mode=st.get("mode_name"))
+        except Exception as e:
+            out["error"] = str(e)[:60]
+            return out
+        if not u.get("is_master"):
+            try:
+                ms = fleet.fetch_json(f"{base}/api/fppd/multiSyncStats", timeout=4, tries=1).get("systems", [])
+                from_player = [x for x in ms if x.get("sourceIP") in player_addrs]
+                out["sync_pkts"] = sum(x.get("pktSyncSeqSync", 0) + x.get("pktSyncMedSync", 0) for x in from_player)
+                out["sync_errors"] = sum(x.get("pktError", 0) for x in from_player)
+                out["last_sync"] = max((x.get("lastReceiveTime") or "" for x in from_player), default="")
+            except Exception:
+                pass
+        return out
+
+    with concurrent.futures.ThreadPoolExecutor(8) as ex:
+        rows = list(ex.map(one, units))
+    now = time.time()
+    prev = _mon["last"]
+    if prev:
+        dt = now - prev["t"]
+        for r in rows:
+            p = prev["pkts"].get(r["host"])
+            if p is not None and r.get("sync_pkts") is not None and dt > 0:
+                r["sync_rate"] = round(max(0, r["sync_pkts"] - p) / dt, 1)
+    _mon["last"] = {"t": now, "pkts": {r["host"]: r.get("sync_pkts") for r in rows}}
+    return {"t": now, "units": rows, "player": next((r for r in rows if r["role"] == "player"), None)}
+
+
+def monitor_loop(interval=60):
+    """Background watch while the UI server runs: offline/online changes, show
+    start/stop, and remotes that are dark while the show plays."""
+    while True:
+        try:
+            if _fleet["lock"].locked():  # a full scan is loading the proxy; check next time
+                time.sleep(interval)
+                continue
+            inv = fleet.load_inventory()
+            units = fleet.discover(CONFIG["master"], inv)
+            seen = {u["host"]: u["online"] for u in units if u.get("expected") is not False}
+            # A unit counts as offline only after two missed checks in a row: one
+            # slow reply through the player's proxy is not an outage.
+            online = {}
+            for h, up in seen.items():
+                _mon["misses"][h] = 0 if up else _mon["misses"].get(h, 0) + 1
+                online[h] = _mon["misses"][h] < 2
+            if _mon["online"] is not None:
+                for h, up in online.items():
+                    was = _mon["online"].get(h)
+                    if was and not up:
+                        notify("bad", f"{h} went offline", "dashboard", key=f"off:{h}")
+                    elif was is False and up:
+                        notify("ok", f"{h} is back online", "dashboard", key=f"on:{h}", quiet_s=60)
+            for u in units:
+                if u["online"] and u.get("expected") is False:
+                    notify("warn", f"{u['host']} ({u['ip']}) answers but isn't in the inventory", "dashboard", key=f"unknown:{u['host']}", quiet_s=86400)
+            _mon["online"] = online
+            live = live_status()
+            pl = live["player"] or {}
+            playing = pl.get("status") == "playing"
+            if playing and _mon["show"] != pl.get("playlist"):
+                notify("info", f"Show started: {pl.get('playlist') or pl.get('sequence')}", "show", key=f"show:{pl.get('playlist')}", quiet_s=600)
+            if not playing and _mon["show"]:
+                notify("info", f"Show stopped: {_mon['show']}", "show", key=f"stop:{_mon['show']}", quiet_s=600)
+            _mon["show"] = pl.get("playlist") if playing else None
+            if playing:
+                for r in live["units"]:
+                    if r["role"] == "remote" and r.get("mode") == "remote" and "error" not in r and \
+                            (r.get("status") != "playing" or r.get("sequence") != pl.get("sequence")):
+                        notify("bad", f"{r['host']} is dark during {pl.get('sequence')} (it is {r.get('status')}"
+                               + (f", on {r.get('sequence')}" if r.get('sequence') else "") + ")",
+                               "show", key=f"dark:{r['host']}:{pl.get('sequence')}", quiet_s=1800)
+        except Exception as e:
+            sys.stderr.write(f"monitor: {e}\n")
+        time.sleep(interval)
 
 
 def load_policy():
@@ -461,7 +627,9 @@ def act_fleet_restart(body):
 ACTIONS = {"snapshot": act_snapshot, "backup": act_backup, "download": act_download, "build": act_build, "flash": act_flash,
            "fleet/apply": act_fleet_apply, "fleet/expect": act_fleet_expect, "fleet/restart": act_fleet_restart,
            "fleet/preview": act_fleet_preview, "fleet/policy": act_fleet_policy_save,
-           "inventory": act_inventory}
+           "inventory": act_inventory,
+           "notifications/read": lambda b: notes_mark(b.get("ids")) or {"ok": True},
+           "notifications/clear": lambda b: notes_mark(clear=True) or {"ok": True}}
 
 
 # ---------------------------------------------------------------- http
@@ -509,6 +677,11 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send(200, cards())
             if path == "/api/fleet":
                 return self.send(200, fleet_report(refresh="refresh=1" in self.path))
+            if path == "/api/notifications":
+                items = sorted(_notes["items"], key=lambda n: -n["t"])
+                return self.send(200, {"unread": sum(not n["read"] for n in items), "items": items[:60]})
+            if path == "/api/show/live":
+                return self.send(200, live_status())
             if path == "/api/dashboard":
                 return self.send(200, {"report": fleet_report(refresh="refresh=1" in self.path),
                                        "backups": backups_by_host(), "now": time.time()})
@@ -580,6 +753,7 @@ def main():
     ap.add_argument("--master", default=os.environ.get("FPP_MASTER", CONFIG["master"]))
     ap.add_argument("--port", type=int, default=8765)
     ap.add_argument("--no-browser", action="store_true")
+    ap.add_argument("--no-monitor", action="store_true", help="don't watch controllers in the background")
     args = ap.parse_args()
     CONFIG["master"] = args.master
     try:
@@ -587,6 +761,9 @@ def main():
     except Exception:
         print(f"warning: player {args.master} not reachable", file=sys.stderr)
 
+    _load_notes()
+    if not args.no_monitor:
+        threading.Thread(target=monitor_loop, daemon=True).start()
     srv = ThreadingHTTPServer(("127.0.0.1", args.port), Handler)
     url = f"http://127.0.0.1:{args.port}/"
     print(f"FPP-Backup UI on {url}  (player {args.master}); Ctrl-C to stop")

@@ -161,7 +161,7 @@ def audit_unit(u):
     return row
 
 
-def scan_unit(u, workers=6):
+def scan_unit(u, workers=4):
     """Every user setting on a unit (schema entries with a "type"), plus its default."""
     if not u["online"]:
         return {}
@@ -262,6 +262,7 @@ def validate_policy(policy):
     out = {"_comment": policy.get("_comment", ""), "master": text(policy.get("master", DEFAULT_MASTER), "master"),
            "fpp_version": text(policy.get("fpp_version", ""), "fpp_version"), "match": match,
            "backup_max_age_days": int(policy.get("backup_max_age_days", 7)),
+           "coverage_exclude": names(policy.get("coverage_exclude", []), "coverage_exclude"),
            "compare": [n for n in names(policy.get("compare", []), "compare") if n not in match],
            "per_unit": names(policy.get("per_unit", []), "per_unit"),
            "secret_pattern": secret.pattern}
@@ -273,7 +274,9 @@ def scan_fleet(master):
     inventory = load_inventory()
     units = discover(master, inventory)
     online = [u for u in units if u["online"]]
-    with concurrent.futures.ThreadPoolExecutor(5) as ex:
+    # 3 units x 4 requests at a time: everything goes through the player's
+    # proxy, and more than that made healthy units time out (and read as offline).
+    with concurrent.futures.ThreadPoolExecutor(3) as ex:
         scans = dict(zip([u["host"] for u in online], ex.map(scan_unit, online)))
         audits = dict(zip([u["host"] for u in online], ex.map(audit_unit, online)))
     for u in online:
@@ -306,10 +309,76 @@ def scan_fleet(master):
                     "sequence": st.get("current_sequence"), "next": st.get("next_playlist")}
         except Exception:
             pass
-    return {"master": master, "scanned": time.time(), "units": units, "scans": scans,
+    try:
+        policy = load_policy()
+        coverage = sequence_coverage(master, units, exclude=policy.get("coverage_exclude", []))
+    except Exception as e:
+        coverage = {"error": str(e)[:120]}
+    return {"master": master, "scanned": time.time(), "units": units, "scans": scans, "coverage": coverage,
             "releases": updates.get("_releases") if isinstance(updates, dict) else None,
             "update_error": updates.get("error") if isinstance(updates, dict) else None,
             "show": show, "inventory": inventory is not None}
+
+
+# ---------------------------------------------------------------- sequences
+
+def playlist_sequences(base, name, seen=None):
+    """Sequence files a playlist plays, following sub-playlists."""
+    seen = seen if seen is not None else set()
+    if name in seen:
+        return set()
+    seen.add(name)
+    d = fetch_json(f"{base}/api/playlist/{urllib.parse.quote(name)}", timeout=10)
+    out = set()
+    for sec in ("leadIn", "mainPlaylist", "leadOut"):
+        for e in d.get(sec) or []:
+            if e.get("enabled") in (0, "0", False):
+                continue
+            if e.get("type") in ("both", "sequence") and e.get("sequenceName"):
+                out.add(e["sequenceName"])
+            elif e.get("type") == "playlist" and e.get("name"):
+                out |= playlist_sequences(base, e["name"], seen)
+    return out
+
+
+def sequence_coverage(master, units, exclude=(), playlists=None):
+    """Which remotes lack a sequence that a scheduled playlist plays.
+
+    In MultiSync a remote plays its own copy of each .fseq by name; if the file
+    is missing it simply stays dark. Checks the playlists that are enabled in
+    the player's schedule (or the ones given). Sizes are not compared: xLights
+    can upload per-controller copies that legitimately differ. Read-only."""
+    base = f"http://{master}"
+    if playlists is None:
+        sched = fetch_json(f"{base}/api/fppd/schedule", timeout=10).get("schedule", {}).get("entries", [])
+        playlists = sorted({e["playlist"] for e in sched if e.get("enabled") and e.get("playlist")})
+    needed = {}
+    for pl in playlists:
+        for seq in playlist_sequences(base, pl):
+            needed.setdefault(seq, []).append(pl)
+
+    def have(u):
+        b = f"http://{master}" if u["is_master"] else (
+            f"http://{u['via']}/proxy/{u['ip']}" if u.get("via") else f"http://{u['ip']}")
+        try:
+            return u["host"], {f["name"] for f in fetch_json(f"{b}/api/files/sequences", timeout=15).get("files", [])}
+        except Exception as e:
+            return u["host"], e
+
+    targets = [u for u in units if u.get("online") and u["host"] not in exclude]
+    with concurrent.futures.ThreadPoolExecutor(6) as ex:
+        files = dict(ex.map(have, targets))
+    rows = []
+    for u in targets:
+        f = files[u["host"]]
+        if isinstance(f, Exception):
+            rows.append({"host": u["host"], "error": str(f)[:80]})
+            continue
+        missing = sorted(s for s in needed if s not in f)
+        rows.append({"host": u["host"], "role": "player" if u["is_master"] else "remote",
+                     "have": len(needed) - len(missing), "missing": missing})
+    return {"playlists": playlists, "needed": len(needed), "units": rows, "used_by": needed,
+            "excluded": sorted(set(exclude)), "checked": time.time()}
 
 
 # ---------------------------------------------------------------- updates
@@ -449,7 +518,7 @@ def evaluate(scan, policy):
                                      "backup_max_age_days": policy.get("backup_max_age_days", 7)},
         "scanned": scan["scanned"], "units": units,
         "releases": scan.get("releases"), "update_error": scan.get("update_error"),
-        "show": scan.get("show"), "inventory": scan.get("inventory"),
+        "show": scan.get("show"), "inventory": scan.get("inventory"), "coverage": scan.get("coverage"),
         "match": match_rows,
         "compare": role_rows(policy["compare"], "compare"),
         "other": role_rows([n for n in all_names if n not in known], "other"),

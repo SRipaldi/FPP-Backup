@@ -181,3 +181,26 @@ ul.attention li .go { white-space: nowrap; }
 .tag.warn { color: var(--warn); border-color: var(--warn); }
 .tag.bad { color: var(--danger); border-color: var(--danger); }
 .tag.info { color: var(--accent); border-color: var(--accent); }
+/* notifications bell */
+.bell-wrap { margin-left: auto; position: relative; }
+.bell { position: relative; background: none; border-color: transparent; padding: 6px 8px; color: var(--text); display: flex; }
+.bell:hover { background: var(--bg); }
+.bell-count { position: absolute; top: 0; right: 0; min-width: 16px; height: 16px; border-radius: 8px; background: var(--danger);
+  color: #fff; font-size: 10px; line-height: 16px; text-align: center; padding: 0 4px; box-sizing: border-box; }
+.bell-panel { position: absolute; right: 0; top: calc(100% + 6px); width: min(420px, calc(100vw - 32px)); max-height: 70vh; overflow: auto;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 8px 28px rgba(0,0,0,.35); z-index: 10; }
+.bell-head { display: flex; justify-content: space-between; align-items: center; padding: 10px 12px; border-bottom: 1px solid var(--line);
+  position: sticky; top: 0; background: var(--panel); }
+#bell-list { list-style: none; margin: 0; padding: 0; }
+#bell-list li { padding: 9px 12px 9px 14px; border-bottom: 1px solid var(--line); border-left: 3px solid var(--line); cursor: pointer; }
+#bell-list li:hover { background: var(--bg); }
+#bell-list li.unread { background: color-mix(in srgb, var(--accent) 7%, transparent); }
+#bell-list li.bad { border-left-color: var(--danger); } #bell-list li.warn { border-left-color: var(--warn); }
+#bell-list li.ok { border-left-color: var(--ok); } #bell-list li.info { border-left-color: var(--accent); }
+#bell-list .when { display: block; font-size: 11px; color: var(--muted); margin-top: 2px; }
+/* live */
+.live-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--danger); display: inline-block; animation: pulse 1.4s infinite; }
+@keyframes pulse { 50% { opacity: .3; } }
+.live-player { margin: 10px 0 14px; display: flex; gap: 24px; flex-wrap: wrap; align-items: baseline; }
+.live-player .big { font-size: 18px; font-weight: 650; }
+.live-dot[hidden], .bell-count[hidden] { display: none; }

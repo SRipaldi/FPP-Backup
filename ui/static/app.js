@@ -36,7 +36,10 @@ function showTab(name) {
   document.querySelectorAll("nav button").forEach((b) => b.classList.toggle("active", b.dataset.tab === name));
   document.querySelectorAll("main section").forEach((s) => (s.hidden = s.id !== "tab-" + name));
   ({ build: loadBuild, flash: loadFlash, jobs: loadJobs, fleet: () => FLEET ? renderFleet() : loadFleet(false),
-     dashboard: () => DASH ? renderDashboard() : loadDashboard(false) }[name] || (() => {}))();
+     dashboard: () => DASH ? renderDashboard() : loadDashboard(false),
+     sequences: () => FLEET ? renderSequences() : loadFleet(false).then(renderSequences),
+     show: startLive }[name] || (() => {}))();
+  if (name !== "show") stopLive();
 }
 document.querySelectorAll("nav button").forEach((b) => (b.onclick = () => showTab(b.dataset.tab)));
 // Sidebar groups remember whether they are open (a convenience; works without storage too).
@@ -297,6 +300,9 @@ function renderDashboard() {
   const stale = expected.filter((u) => B[u.host] && Date.now() - lastMs(u.host) > maxAge * 864e5);
   const clockBad = online.filter((u) => u.offset_s !== null && u.offset_s !== undefined && Math.abs(u.offset_s) > 2);
   const lowDisk = online.filter((u) => u.disk_total && u.disk_free / u.disk_total < 0.15);
+  const covGaps = (R.coverage?.units || []).filter((u) => u.missing?.length);
+  const seqMissing = covGaps.reduce((n, u) => n + u.missing.length, 0);
+  $("#seq-badge").hidden = !seqMissing; $("#seq-badge").textContent = seqMissing;
   $("#dash-when").textContent = `Scanned ${new Date(R.scanned * 1000).toLocaleTimeString()}`;
 
   const tile = (go, cls, k, n, sub) => `<button class="tile ${cls}" data-go="${go}"><span class="k">${k}</span><span class="n">${n}</span><span class="s">${sub}</span></button>`;
@@ -311,6 +317,8 @@ function renderDashboard() {
          R.releases?.latest ? `latest release ${esc(R.releases.latest)}` : esc(R.update_error ? "update check failed" : "")),
     tile("controllers", never.length ? "bad" : stale.length ? "warn" : "", "Backups", never.length + stale.length ? `${never.length + stale.length} due` : "current",
          `${never.length} never · ${stale.length} older than ${maxAge} days`),
+    tile("sequences", covGaps.length ? "bad" : R.coverage?.error ? "warn" : "", "Sequences", covGaps.length ? `${covGaps.reduce((n, u) => n + u.missing.length, 0)} missing` : R.coverage?.error ? "?" : "complete",
+         covGaps.length ? `on ${covGaps.map((u) => esc(u.host)).join(", ")}` : R.coverage?.needed ? `${R.coverage.needed} sequences on every controller` : esc(R.coverage?.error || "")),
     tile("fleet", clockBad.length || lowDisk.length ? "warn" : "", "Health", clockBad.length + lowDisk.length || "ok",
          `${clockBad.length} clock · ${lowDisk.length} low storage`),
   ].join("");
@@ -323,6 +331,7 @@ function renderDashboard() {
     `<button class="small" data-inv-remove="${esc(u.host)}" title="Remove from fleet-inventory.json">Not expected</button>`));
   unknown.forEach((u) => add("warn", `<strong>${esc(u.host)}</strong> (${esc(u.ip)}) answers but isn't in the inventory.`, null, null,
     `<button class="small" data-inv-add="${esc(u.host)}">Add to inventory</button>`));
+  covGaps.forEach((u) => add("bad", `<strong>${esc(u.host)}</strong> is missing ${u.missing.length} sequence${u.missing.length > 1 ? "s" : ""} the schedule plays (${u.missing.slice(0, 3).map(esc).join(", ")}${u.missing.length > 3 ? "…" : ""}); it will be dark for ${u.missing.length > 1 ? "them" : "it"}.`, "sequences", "Sequences"));
   if (never.length) add("bad", `Never backed up: ${never.map((u) => `<strong>${esc(u.host)}</strong>`).join(", ")}.`, "controllers", "Back up");
   if (stale.length) add("warn", `Last backup older than ${maxAge} days: ${stale.map((u) => `${esc(u.host)} (${ago(lastMs(u.host))})`).join(", ")}.`, "controllers", "Back up");
   if (behind.length) add("warn", `${behind.map((u) => `<strong>${esc(u.host)}</strong>`).join(", ")} run${behind.length === 1 ? "s" : ""} ${[...new Set(behind.map((u) => esc(u.version)))].join("/")}; the target is ${esc(target)}.`, "build", "Build card");
@@ -382,6 +391,98 @@ async function inventory(host, op) {
     renderDashboard();
   } catch (e) { toast(e.message); }
 }
+
+// ------------------------------------------------------------ sequences
+async function loadSequences(refresh) {
+  $("#seq-when").textContent = "Scanning (about 20 seconds)…";
+  try { FLEET = await api("/api/fleet" + (refresh ? "?refresh=1" : "")); PREVIEW = false; renderSequences(); }
+  catch (e) { $("#seq-when").innerHTML = `<span class="bad">${esc(e.message)}</span>`; }
+}
+$("#seq-refresh").onclick = () => loadSequences(true);
+
+function renderSequences() {
+  const C = FLEET.coverage || {};
+  $("#seq-when").textContent = C.checked ? `Checked ${new Date(C.checked * 1000).toLocaleTimeString()}` : "";
+  if (C.error) { $("#seq-summary").innerHTML = `<span class="chip bad">${esc(C.error)}</span>`; $("#seq-units").innerHTML = ""; return; }
+  const gaps = (C.units || []).filter((u) => u.missing?.length);
+  const missing = gaps.reduce((n, u) => n + u.missing.length, 0);
+  $("#seq-summary").innerHTML = `<span class="chip">Playlists checked: <strong>${(C.playlists || []).map(esc).join(", ") || "none"}</strong></span>
+    <span class="chip"><strong>${C.needed || 0}</strong> sequences</span>
+    <span class="chip ${missing ? "bad" : "ok"}"><strong>${missing}</strong> missing on ${gaps.length} controller${gaps.length === 1 ? "" : "s"}</span>` +
+    (C.excluded?.length ? `<span class="chip">Excluded: ${C.excluded.map(esc).join(", ")}</span>` : "");
+  $("#seq-units").innerHTML = `<thead><tr><th>Controller</th><th>Sequences</th><th>Missing</th></tr></thead><tbody>` +
+    (C.units || []).map((u) => `<tr><td><strong>${esc(u.host)}</strong><span class="sub">${esc(u.role || "")}</span></td>
+      <td class="${u.error ? "bad" : u.missing?.length ? "bad" : "good"}">${u.error ? "error" : `${u.have} / ${C.needed}`}</td>
+      <td>${u.error ? esc(u.error) : u.missing.length ? u.missing.map((m) => `<div class="bad">${esc(m)}</div>`).join("") : '<span class="muted">none</span>'}</td></tr>`).join("") + "</tbody>";
+  const b = $("#seq-badge"); b.hidden = !missing; b.textContent = missing;
+}
+
+// ------------------------------------------------------------ live show
+let liveTimer = null;
+function startLive() { stopLive(); pollLive(); liveTimer = setInterval(pollLive, 3000); }
+function stopLive() { if (liveTimer) clearInterval(liveTimer); liveTimer = null; }
+const fmtSec = (n) => n === undefined || n === null ? "" : `${Math.floor(n / 60)}:${String(n % 60).padStart(2, "0")}`;
+
+async function pollLive() {
+  let L;
+  try { L = await api("/api/show/live"); } catch (e) { $("#live-when").innerHTML = `<span class="bad">${esc(e.message)}</span>`; return; }
+  $("#live-when").textContent = `Updated ${new Date(L.t * 1000).toLocaleTimeString()}`;
+  const P = L.player || {}, playing = P.status === "playing";
+  $("#live-dot").hidden = !playing;
+  $("#live-player").innerHTML = !L.player ? '<span class="bad">Player not reachable.</span>' : playing
+    ? `<div><span class="k muted small">PLAYING</span><div class="big good">${esc(P.playlist || "")}</div></div>
+       <div><span class="muted small">Sequence</span><div class="big">${esc(P.sequence)}</div></div>
+       <div><span class="muted small">Position</span><div class="big">${fmtSec(P.seconds)} <span class="muted">/ −${fmtSec(P.remaining)}</span></div></div>`
+    : `<div><span class="muted small">PLAYER</span><div class="big">${esc(P.status || "idle")}</div></div><div class="muted">Remotes are shown below; sync is only checked while a show plays.</div>`;
+  const rows = L.units.filter((u) => u.role === "remote");
+  const verdict = (u) => {
+    if (u.error) return ["bad", "No answer"];
+    if (u.mode && u.mode !== "remote") return ["", `not a remote (${u.mode})`];
+    if (!playing) return ["", u.status || ""];
+    if (u.status !== "playing") return ["bad", "DARK: not playing"];
+    if (u.sequence !== P.sequence) return ["bad", "Wrong sequence"];
+    const d = u.seconds - P.seconds;
+    if (Math.abs(d) > 1) return ["warn", `${d > 0 ? "Ahead" : "Behind"} ${Math.abs(d)} s`];
+    if (u.sync_rate === 0) return ["warn", "No sync packets"];
+    return ["ok", "In sync"];
+  };
+  $("#live-units").innerHTML = `<thead><tr><th>Remote</th><th>Verdict</th><th>Status</th><th>Sequence</th><th>Position</th><th>Δ vs player</th><th>Sync pkts/s</th><th>Last sync</th></tr></thead><tbody>` +
+    rows.map((u) => {
+      const [cls, text] = verdict(u);
+      const d = playing && u.status === "playing" ? u.seconds - P.seconds : null;
+      return `<tr><td><strong>${esc(u.host)}</strong><span class="sub">${esc(u.ip)}</span></td>
+        <td><span class="tag ${cls}">${esc(text)}</span></td>
+        <td>${esc(u.status || "")}</td>
+        <td class="${playing && u.sequence && u.sequence !== P.sequence ? "bad" : ""}">${esc(u.sequence || "—")}</td>
+        <td>${u.status === "playing" ? fmtSec(u.seconds) : ""}</td>
+        <td class="${d !== null && Math.abs(d) > 1 ? "warn" : ""}">${d === null ? "" : (d > 0 ? "+" : "") + d + " s"}</td>
+        <td class="${playing && u.sync_rate === 0 ? "warn" : ""}">${u.sync_rate ?? ""}${u.sync_errors ? ` <span class="bad">(${u.sync_errors} err)</span>` : ""}</td>
+        <td class="muted small">${esc((u.last_sync || "").replace(/^\d{4}-\d\d-\d\d /, ""))}</td></tr>`;
+    }).join("") + "</tbody>";
+}
+
+// ------------------------------------------------------------ notifications
+async function loadNotes() {
+  try {
+    const N = await api("/api/notifications");
+    const c = $("#bell-count"); c.hidden = !N.unread; c.textContent = N.unread > 99 ? "99+" : N.unread;
+    $("#bell-list").innerHTML = N.items.length ? N.items.map((n) => `<li class="${esc(n.level)}${n.read ? "" : " unread"}" data-id="${n.id}" data-link="${esc(n.link || "")}">
+      ${esc(n.text)}<span class="when">${new Date(n.t * 1000).toLocaleString()}</span></li>`).join("")
+      : '<li class="muted">No notifications.</li>';
+    $("#bell-list").querySelectorAll("li[data-id]").forEach((li) => (li.onclick = async () => {
+      await api("/api/notifications/read", { ids: [li.dataset.id] });
+      if (li.dataset.link) { $("#bell-panel").hidden = true; showTab(li.dataset.link); }
+      loadNotes();
+    }));
+  } catch { /* server restarting */ }
+}
+$("#bell").onclick = (e) => { e.stopPropagation(); $("#bell-panel").hidden = !$("#bell-panel").hidden; if (!$("#bell-panel").hidden) loadNotes(); };
+$("#bell-panel").onclick = (e) => e.stopPropagation();
+document.addEventListener("click", () => ($("#bell-panel").hidden = true));
+$("#bell-read").onclick = async () => { await api("/api/notifications/read", {}); loadNotes(); };
+$("#bell-clear").onclick = async () => { if (confirm("Clear all notifications?")) { await api("/api/notifications/clear", {}); loadNotes(); } };
+loadNotes();
+setInterval(loadNotes, 15000);
 
 // ------------------------------------------------------------ fleet
 let FLEET = null;
