@@ -273,11 +273,12 @@ function renderFleet() {
     all.checked = n && n === picks().length; all.indeterminate = n > 0 && n < picks().length;
     all.disabled = !picks().length;
   };
-  picks().forEach((i) => (i.onchange = syncPicks));
+  picks().forEach((i) => { if (precheck.has(i.dataset.pick)) i.checked = true; i.onchange = syncPicks; });
+  precheck.clear();
   $("#fleet-pick-all").onchange = (e) => { picks().forEach((i) => (i.checked = e.target.checked)); syncPicks(); };
   $("#fleet-update").onclick = () => runFleetUpdate(picks().filter((i) => i.checked).map((i) => i.dataset.pick));
   syncPicks();
-  document.querySelectorAll("td[data-expect]").forEach((td) => (td.onclick = () => makeExpected(td.dataset.expect, td.dataset.value)));
+  document.querySelectorAll("td[data-expect]").forEach((td) => (td.onclick = () => makeExpectedMany([{ setting: td.dataset.expect, value: td.dataset.value }])));
 
   // remotes that disagree
   const valueRow = (r, withAction) => {
@@ -285,7 +286,7 @@ function renderFleet() {
     const counts = {};
     hosts.filter((h) => h !== master?.host).forEach((h) => (counts[r.cells[h]] = (counts[r.cells[h]] || 0) + 1));
     const common = Object.keys(counts).sort((a, b) => counts[b] - counts[a])[0];
-    return `<tr><td><strong>${esc(r.name)}</strong><span class="why">${esc(r.description || "")}</span></td>` +
+    return `<tr>${withAction ? `<td class="pick"><input type="checkbox" data-expect-pick="${esc(r.name)}"></td>` : ""}<td><strong>${esc(r.name)}</strong><span class="why">${esc(r.description || "")}</span></td>` +
       hosts.map((h) => {
         const v = r.cells[h];
         const odd = withAction && h !== master?.host && v !== common;
@@ -294,10 +295,25 @@ function renderFleet() {
       (withAction ? `<td><select data-for="${esc(r.name)}">${remoteVals.map((v) => `<option value="${esc(v)}" ${v === common ? "selected" : ""}>${esc(shown(v))}</option>`).join("")}</select>
         <button class="small" data-promote="${esc(r.name)}">Make expected</button></td>` : "<td></td>") + "</tr>";
   };
-  $("#fleet-compare").innerHTML = disagree.length ? head("<th>Setting</th>") + "<tbody>" + disagree.map((r) => valueRow(r, true)).join("") + "</tbody>"
+  $("#fleet-compare").innerHTML = disagree.length
+    ? head(`<th class="pick"><input type="checkbox" id="fleet-expect-all" title="Select every setting"></th><th>Setting</th>`) + "<tbody>" + disagree.map((r) => valueRow(r, true)).join("") + "</tbody>"
     : '<tbody><tr><td class="muted">All remotes agree on every compared setting.</td></tr></tbody>';
+  const chosenValue = (name) => document.querySelector(`select[data-for="${name}"]`).value;
   document.querySelectorAll("[data-promote]").forEach((b) => (b.onclick = () =>
-    makeExpected(b.dataset.promote, document.querySelector(`select[data-for="${b.dataset.promote}"]`).value)));
+    makeExpectedMany([{ setting: b.dataset.promote, value: chosenValue(b.dataset.promote) }])));
+  const ePicks = () => [...document.querySelectorAll("input[data-expect-pick]")];
+  const syncEPicks = () => {
+    const n = ePicks().filter((i) => i.checked).length;
+    const btn = $("#fleet-expect-checked");
+    btn.disabled = !n; btn.textContent = n ? `Make checked expected (${n})` : "Make checked expected";
+    const all = $("#fleet-expect-all");
+    if (all) { all.checked = n && n === ePicks().length; all.indeterminate = n > 0 && n < ePicks().length; }
+  };
+  ePicks().forEach((i) => (i.onchange = syncEPicks));
+  if ($("#fleet-expect-all")) $("#fleet-expect-all").onchange = (e) => { ePicks().forEach((i) => (i.checked = e.target.checked)); syncEPicks(); };
+  $("#fleet-expect-checked").onclick = () => makeExpectedMany(ePicks().filter((i) => i.checked)
+    .map((i) => ({ setting: i.dataset.expectPick, value: chosenValue(i.dataset.expectPick) })));
+  syncEPicks();
   $("#fleet-perunit").innerHTML = head("<th>Setting</th>") + "<tbody>" + F.per_unit.map((r) => valueRow(r, false)).join("") + "</tbody>";
   renderRestartNote();
 }
@@ -347,13 +363,22 @@ function watchFleetJob(job) {
   });
 }
 
-async function makeExpected(name, value) {
-  if (!confirm(`Make "${shown(value)}" the expected ${name} for the whole fleet?\n\nThis only edits fleet-policy.json; nothing is sent to the controllers. Use Apply afterwards to change the units that differ.`)) return;
+const precheck = new Set();
+
+async function makeExpectedMany(items) {
+  if (!items.length) return;
+  const list = items.map((i) => `  ${i.setting} = ${shown(i.value)}`).join("\n");
+  if (!confirm(`Make these the expected values for the whole fleet?\n\n${list}\n\nThis only edits fleet-policy.json; nothing is sent to the controllers. After the rescan, the units that differ are checked under "Settings that should match", ready for Update checked.`)) return;
   try {
-    await api("/api/fleet/expect", { setting: name, value });
-    toast(`${name}: expected value is now ${shown(value)}. Rescanning…`);
-    await loadFleet(true);
-  } catch (e) { toast(e.message); }
+    await api("/api/fleet/expect", { items });
+  } catch (e) { toast(e.message); return; }
+  items.forEach((i) => precheck.add(i.setting));
+  toast(`Policy updated (${items.length}). Rescanning…`);
+  await loadFleet(true);
+  const ticked = [...document.querySelectorAll("input[data-pick]")].filter((i) => i.checked).length;
+  toast(ticked ? `${ticked} setting(s) now differ from the policy and are checked. Review, then press Update checked.`
+               : "Policy updated. Every unit already matches.");
+  if (ticked) $("#fleet-match").scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
 function renderRestartNote() {

@@ -341,20 +341,29 @@ def act_fleet_apply(body):
 
 
 def act_fleet_expect(body):
-    """Make a value the expected one (or promote a compared setting into the policy).
+    """Make values the expected ones (or promote compared settings into the policy).
+    Takes {"items": [{"setting", "value"}, ...]} or a single {"setting", "value"}.
+    Every item is validated before the file is written, so it is all or nothing.
     Edits fleet-policy.json only; nothing is sent to a controller."""
-    name, value = body["setting"], str(body["value"])
-    if not re.match(r"^[\w\-]+$", name) or len(value) > 200 or "\n" in value:
-        raise ValueError("bad setting or value")
+    items = body.get("items") or [{"setting": body.get("setting"), "value": body.get("value")}]
     policy = load_policy()
     rep = _fleet["data"] or {}
     known = {r["name"] for k in ("match", "compare", "other") for r in rep.get(k, [])}
-    if name not in policy["match"] and name not in known:
-        raise ValueError(f"unknown setting {name}")
-    rule = policy["match"].setdefault(name, {"why": "Added from the Fleet page"})
-    rule["value"] = value
-    if name in policy["compare"]:
-        policy["compare"].remove(name)
+    for it in items:
+        name, value = it.get("setting"), it.get("value")
+        if not isinstance(name, str) or not re.match(r"^[\w\-]+$", name) or value is None:
+            raise ValueError(f"bad setting: {name!r}")
+        value = str(value)
+        if len(value) > 200 or "\n" in value:
+            raise ValueError(f"bad value for {name}")
+        if name not in policy["match"] and name not in known:
+            raise ValueError(f"unknown setting {name}")
+    for it in items:
+        name = it["setting"]
+        rule = policy["match"].setdefault(name, {"why": "Added from the Fleet page"})
+        rule["value"] = str(it["value"])
+        if name in policy["compare"]:
+            policy["compare"].remove(name)
     fleet.POLICY.write_text(json.dumps(policy, indent=2) + "\n")
     _fleet["t"] = 0
     return None

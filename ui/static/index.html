@@ -61,7 +61,10 @@
     <div id="fleet-restart-note" class="note-box" hidden></div>
 
     <h2 class="section">Remotes that disagree <span class="muted small">no expected value yet</span></h2>
-    <p class="muted small">Settings where the remote controllers are not all the same. Pick the value they should all have to add it to the policy.</p>
+    <p class="muted small">Settings where the remote controllers are not all the same. Pick the value they should all have to add it to the policy. This edits <code>fleet-policy.json</code> only; the settings then appear above, checked, ready for <strong>Update checked</strong>.</p>
+    <div class="bar fleet-actions">
+      <button id="fleet-expect-checked" disabled>Make checked expected</button>
+    </div>
     <div class="table-wrap"><table id="fleet-compare" class="grid"></table></div>
 
     <details class="section">
