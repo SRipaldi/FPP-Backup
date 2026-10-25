@@ -203,9 +203,20 @@ ul.attention li .go { white-space: nowrap; }
 @keyframes pulse { 50% { opacity: .3; } }
 .live-player { margin: 10px 0 14px; display: flex; gap: 24px; flex-wrap: wrap; align-items: baseline; }
 .live-player .big { font-size: 18px; font-weight: 650; }
-.live-dot[hidden], .bell-count[hidden] { display: none; }
+/* hidden must win over display rules such as .row's flex */
+[hidden] { display: none !important; }
 /* settings */
 .settings-grid { display: grid; gap: 10px; }
 .settings-grid label { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 input.narrow-num { width: 90px; min-width: 0; }
 #set-player { min-width: 260px; }
+
+/* Compact multi-pick dropdown (Sequences: which controllers to check). */
+details.dropdown { position: relative; }
+details.dropdown summary { list-style: none; cursor: pointer; border: 1px solid var(--line); border-radius: 6px; padding: 5px 28px 5px 10px; background: var(--panel); position: relative; }
+details.dropdown summary::-webkit-details-marker { display: none; }
+details.dropdown summary::after { content: "▾"; position: absolute; right: 10px; color: var(--muted); }
+details.dropdown .menu { position: absolute; z-index: 20; top: calc(100% + 4px); left: 0; min-width: 200px; max-height: 320px; overflow: auto;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; box-shadow: 0 6px 20px rgba(0,0,0,.25); }
+details.dropdown .menu label { display: flex; padding: 3px 0; }
+details.dropdown .menu #ver-hosts { border-top: 1px solid var(--line); margin-top: 4px; padding-top: 4px; }

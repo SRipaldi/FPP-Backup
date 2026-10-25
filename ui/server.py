@@ -747,9 +747,23 @@ def act_xlights_push(body):
                      exclusive="xlights", keep_going=True, after=rescan_after)
 
 
+def act_sequence_versions(body):
+    """Read the render ID of every scheduled sequence on the chosen controllers
+    (read-only, a few minutes for the whole fleet)."""
+    hosts = body.get("hosts")
+    if hosts != "all":
+        hosts = [h for h in hosts or [] if re.match(r"^[\w\-]+$", h)]
+        if not hosts:
+            raise ValueError("no controllers chosen")
+    arg = "all" if hosts == "all" else ",".join(hosts)
+    return start_job("versions", f"Check sequence render versions on {'all controllers' if arg == 'all' else ', '.join(hosts)}",
+                     [[PY, TOOLS / "xlights.py", "--master", need_player(), "versions", "--hosts", arg]],
+                     exclusive="versions")
+
+
 ACTIONS = {"snapshot": act_snapshot, "backup": act_backup, "download": act_download, "build": act_build, "flash": act_flash,
            "fleet/apply": act_fleet_apply, "fleet/expect": act_fleet_expect, "fleet/restart": act_fleet_restart,
-           "fleet/preview": act_fleet_preview, "xlights/push": act_xlights_push, "fleet/policy": act_fleet_policy_save,
+           "fleet/preview": act_fleet_preview, "xlights/push": act_xlights_push, "sequences/versions": act_sequence_versions, "fleet/policy": act_fleet_policy_save,
            "inventory": act_inventory, "inventory/rebuild": act_inventory_rebuild,
            "settings": act_settings_save, "settings/test": act_settings_test,
            "notifications/read": lambda b: notes_mark(b.get("ids")) or {"ok": True},
@@ -805,6 +819,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send(200, settings_view())
             if path == "/api/xlights":
                 return self.send(200, xlights_view())
+            if path == "/api/sequences/versions":
+                return self.send(200, xlights.version_report())
             if path == "/api/notifications":
                 items = sorted(_notes["items"], key=lambda n: -n["t"])
                 return self.send(200, {"unread": sum(not n["read"] for n in items), "items": items[:60]})

@@ -73,7 +73,7 @@ The fleet is a real, running light show.
 
 - **Never let a request time out early.** xLights can crash if the client disconnects before it replies; uploads and renders use a one-hour timeout.
 - `getVersion`, `getShowFolder` and `getOpenSequence` are read-only. `uploadSequence` writes to a controller, `batchRender` rewrites the .fseq: both need the user's OK. Don't run `xLights --version` to read the version: it launches a second copy; read the app's Info.plist instead.
-- Every copy of a render carries the render's ID (FSEQ v2 header bytes 24-31; `/api/sequence/<name>/meta` reports it as `ID`), so a controller's copy can be matched to the show folder's .fseq. FPP answers 404 on `meta` for a few seconds after an upload.
+- Every copy of a render carries the render's ID (FSEQ v2 header bytes 24-31; `/api/sequence/<name>/meta` reports it as `ID`), so a controller's copy can be matched to the show folder's .fseq. FPP answers 404 on `meta` for a few seconds after an upload. `xlights.py versions` stores what it read in `work/cache/sequence-versions.json`; `version_report()` compares it with the show folder on every request. Show-folder names can carry a leading space that FPP drops, so names are matched with surrounding spaces ignored.
 
 ## macOS specifics
 

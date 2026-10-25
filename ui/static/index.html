@@ -150,11 +150,22 @@
       <h2 class="page-title">Sequences</h2>
       <div class="row"><span id="seq-when" class="muted small"></span><button id="seq-refresh">Rescan</button></div>
     </div>
-    <p class="muted small">Every sequence a scheduled playlist plays must be on every controller: a remote plays its own copy, and stays dark if the file is missing. Tick missing ones and press <strong>Push checked</strong> to have xLights upload them, as FPP Connect would (each controller gets just its own channels; the player also gets the audio). Exclude a controller that isn't part of the show by adding it to <code>coverage_exclude</code> in <code>fleet-policy.json</code>.</p>
+    <p class="muted small">Every sequence a scheduled playlist plays must be on every controller: a remote plays its own copy, and stays dark if the file is missing. <strong>Check versions</strong> also finds copies from an older render. Tick missing or older ones and press <strong>Push checked</strong> to have xLights upload them, as FPP Connect would (each controller gets just its own channels; the player also gets the audio). Exclude a controller that isn't part of the show by adding it to <code>coverage_exclude</code> in <code>fleet-policy.json</code>.</p>
     <div id="seq-summary" class="chips"></div>
+    <div class="row" id="seq-ver-bar">
+      <details class="dropdown" id="ver-pick">
+        <summary id="ver-pick-label">All controllers</summary>
+        <div class="menu">
+          <label class="inline"><input type="checkbox" id="ver-all" checked> All controllers</label>
+          <div id="ver-hosts"></div>
+        </div>
+      </details>
+      <button id="ver-run" title="Read the render ID of each scheduled sequence on the chosen controllers and compare it with the show folder's render. Read-only; a few minutes for the whole fleet.">Check versions</button>
+      <span id="ver-state" class="small muted"></span>
+    </div>
     <div class="row" id="seq-push-bar">
       <span id="seq-xl" class="small muted">xLights: checking…</span>
-      <label class="inline small" title="Render the sequence in xLights before uploading (needed when the .xsq was saved after its last render). Other controllers then hold the old render until they get the new one too."><input type="checkbox" id="seq-render"> Render first</label>
+      <label class="inline small" id="seq-render-wrap" title="Render the sequence in xLights before uploading (needed when the .xsq was saved after its last render). Other controllers then hold the old render until they get the new one too."><input type="checkbox" id="seq-render"> Render first</label>
       <button id="seq-push" disabled>Push checked</button>
     </div>
     <div class="table-wrap"><table id="seq-units"></table></div>

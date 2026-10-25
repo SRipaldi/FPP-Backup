@@ -9,15 +9,23 @@ what goes where, refuses while a show is playing, and checks the result: the
 copy on the controller must carry the same render ID and frame count as the
 .fseq in the show folder.
 
-status is read-only. push writes one .fseq to each named controller; the
-player also gets the audio (remotes play no audio in MultiSync).
+status and versions are read-only. push writes one .fseq to each named
+controller; the player also gets the audio (remotes play no audio in MultiSync).
+
+versions reads the render ID of every scheduled sequence on the chosen
+controllers (one small request per file, through the player's proxy, so it
+takes a few minutes for a whole fleet) and keeps the result in
+work/cache/sequence-versions.json; a copy whose ID differs from the show
+folder's .fseq is from an older render.
 
 Usage:
   tools/xlights.py status
   tools/xlights.py push rgb-24-Beetlejuice.fseq --hosts FPP-Tree[,FPP-Roof]
   tools/xlights.py push <name>.fseq --hosts FPP-Tree --render   # re-render first
+  tools/xlights.py versions --hosts all|FPP-Tree,FPP-Roof
 """
 import argparse
+import concurrent.futures
 import json
 import struct
 import sys
@@ -35,6 +43,7 @@ XL = "http://127.0.0.1:49913"
 UPLOAD_TIMEOUT = 3600
 RENDER_TIMEOUT = 3600
 SKIP_DIRS = {"Backup", "backup"}
+VERSIONS = fleet.ROOT / "work/cache/sequence-versions.json"
 
 
 class XLError(Exception):
@@ -86,10 +95,12 @@ def fseq_header(path):
 def local_sequence(show, name):
     """The .xsq for an FPP sequence name in the show folder, its rendered .fseq,
     and whether the .xsq was saved after the render. None if not found."""
-    stem = Path(name).stem.lower()
+    # Spaces around the name are ignored: FPP drops a leading space that a
+    # show-folder file name can have.
+    stem = Path(name).stem.strip().lower()
     root = Path(show)
     hits = [p for p in root.rglob("*.xsq")
-            if p.stem.lower() == stem and not SKIP_DIRS & set(p.relative_to(root).parts[:-1])]
+            if p.stem.strip().lower() == stem and not SKIP_DIRS & set(p.relative_to(root).parts[:-1])]
     if not hits:
         return None
     xsq = min(hits, key=lambda p: len(p.parts))  # the top-level one if there are several
@@ -112,6 +123,122 @@ def remote_meta(u, name, wait=60):
             if e.code != 404 or time.time() > end:
                 raise
             time.sleep(3)
+
+
+def load_versions():
+    try:
+        return json.loads(VERSIONS.read_text())
+    except (OSError, ValueError):
+        return {"units": {}}
+
+
+def version_report(versions=None, show=None):
+    """Each checked controller's copies against the reference render: the show
+    folder's .fseq when xLights is available, else the player's copy."""
+    versions = versions or load_versions()
+    units = versions.get("units", {})
+    if show is None:
+        try:
+            show = status()["show"]
+        except Exception:
+            show = None
+    names = {n for u in units.values() for n in u.get("seqs", {})}
+    ref, source = {}, None
+    if show:
+        source = "show folder"
+        for n in names:
+            loc = local_sequence(show, n)
+            if loc and loc.get("id"):
+                ref[n] = loc["id"]
+    else:
+        player = units.get(versions.get("player") or "", {})
+        if player:
+            source = f"player ({versions['player']})"
+            ref = {n: v["id"] for n, v in player.get("seqs", {}).items() if v.get("id")}
+    out = {}
+    for host, u in units.items():
+        r = {"checked": u.get("checked"), "current": 0, "outdated": [], "errors": [], "unknown": []}
+        for n, v in sorted(u.get("seqs", {}).items()):
+            if v.get("error"):
+                r["errors"].append(f"{n}: {v['error']}")
+            elif n not in ref:
+                r["unknown"].append(n)
+            elif str(v.get("id")) == ref[n]:
+                r["current"] += 1
+            else:
+                r["outdated"].append({"seq": n, "id": v.get("id"), "want": ref[n]})
+        out[host] = r
+    return {"source": source, "units": out}
+
+
+def cmd_versions(args):
+    _, needed = fleet.scheduled_sequences(args.master)
+    wanted = None if args.hosts == "all" else set(args.hosts.split(","))
+    units = [u for u in fleet.discover(args.master, fleet.load_inventory())
+             if u["online"] and (wanted is None or u["host"] in wanted)]
+    missing = sorted((wanted or set()) - {u["host"] for u in units})
+    for h in missing:
+        print(f"SKIP {h:12} offline or not found")
+    if not units:
+        sys.exit("no controllers to check")
+    try:
+        state = fleet.fetch_json(f"http://{args.master}/api/fppd/status").get("status_name")
+    except Exception as e:
+        sys.exit(f"cannot read the player's status: {e}")
+    if state != "idle":
+        sys.exit(f"the player is {state}; not loading its proxy during a show")
+
+    work = []
+    for u in units:
+        try:
+            have = {f["name"] for f in fleet.fetch_json(f"{u['base']}/api/files/sequences", timeout=15).get("files", [])}
+        except Exception as e:
+            print(f"FAIL {u['host']:12} cannot list sequences: {e}")
+            continue
+        work += [(u, n) for n in sorted(needed) if n in have]
+
+    def one(item):
+        u, n = item
+        try:
+            m = fleet.fetch_json(f"{u['base']}/api/sequence/{urllib.parse.quote(n)}/meta", timeout=20)
+            return u["host"], n, {"id": str(m.get("ID")), "frames": m.get("NumFrames")}
+        except Exception as e:
+            return u["host"], n, {"error": str(e)[:80]}
+
+    print(f"Reading {len(work)} sequence headers from {len(units)} controller(s)...", flush=True)
+    found = {}
+    # 4 at a time: every request goes through the player's proxy (see fleet.scan_fleet).
+    with concurrent.futures.ThreadPoolExecutor(4) as ex:
+        for i, (host, n, v) in enumerate(ex.map(one, work), 1):
+            found.setdefault(host, {})[n] = v
+            print(f"\r  {i}/{len(work)} {host} {n[:50]}", end="", file=sys.stderr, flush=True)
+    print("\r", end="", file=sys.stderr, flush=True)
+
+    versions = load_versions()
+    player = next((u["host"] for u in units if u.get("is_master")), None)
+    if player:
+        versions["player"] = player
+    now = time.time()
+    for u in units:
+        if u["host"] in found:
+            versions["units"][u["host"]] = {"checked": now, "seqs": found[u["host"]]}
+    VERSIONS.parent.mkdir(parents=True, exist_ok=True)
+    VERSIONS.write_text(json.dumps(versions, indent=1))
+
+    rep = version_report(versions)
+    print(f"Compared with the {rep['source'] or 'nothing (no show folder or player copy to compare with)'}:")
+    failed = 0
+    for u in units:
+        r = rep["units"].get(u["host"])
+        if not r:
+            continue
+        bad = r["outdated"] or r["errors"]
+        failed += bool(bad)
+        print(f"{'OUTD' if r['outdated'] else 'FAIL' if r['errors'] else 'OK  '} {u['host']:12} {r['current']} current"
+              + (f", {len(r['outdated'])} older render: {', '.join(o['seq'] for o in r['outdated'][:5])}" if r["outdated"] else "")
+              + (f", {len(r['errors'])} unreadable" if r["errors"] else "")
+              + (f", {len(r['unknown'])} not in the reference" if r["unknown"] else ""))
+    sys.exit(1 if failed else 0)
 
 
 def cmd_status(args):
@@ -194,11 +321,13 @@ def main():
     p.add_argument("name", help="sequence file name as FPP knows it, e.g. song.fseq")
     p.add_argument("--hosts", required=True, help="comma-separated hostnames")
     p.add_argument("--render", action="store_true", help="render it in xLights first")
+    v = sub.add_parser("versions", help="read the render ID of every scheduled sequence on controllers (read-only)")
+    v.add_argument("--hosts", required=True, help='comma-separated hostnames, or "all"')
     args = ap.parse_args()
-    if args.cmd == "push" and not args.master:
+    if args.cmd in ("push", "versions") and not args.master:
         sys.exit("no player configured: pass --master <ip> or set it on the UI's Settings page")
     try:
-        {"status": cmd_status, "push": cmd_push}[args.cmd](args)
+        {"status": cmd_status, "push": cmd_push, "versions": cmd_versions}[args.cmd](args)
     except XLError as e:
         sys.exit(str(e))
 

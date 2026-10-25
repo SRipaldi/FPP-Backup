@@ -415,13 +415,9 @@ def playlist_sequences(base, name, seen=None):
     return out
 
 
-def sequence_coverage(master, units, exclude=(), playlists=None):
-    """Which remotes lack a sequence that a scheduled playlist plays.
-
-    In MultiSync a remote plays its own copy of each .fseq by name; if the file
-    is missing it simply stays dark. Checks the playlists that are enabled in
-    the player's schedule (or the ones given). Sizes are not compared: xLights
-    can upload per-controller copies that legitimately differ. Read-only."""
+def scheduled_sequences(master, playlists=None):
+    """The playlists enabled in the player's schedule (or the ones given), and
+    {sequence: [playlists that play it]}. Read-only."""
     base = f"http://{master}"
     if playlists is None:
         sched = fetch_json(f"{base}/api/fppd/schedule", timeout=10).get("schedule", {}).get("entries", [])
@@ -430,6 +426,17 @@ def sequence_coverage(master, units, exclude=(), playlists=None):
     for pl in playlists:
         for seq in playlist_sequences(base, pl):
             needed.setdefault(seq, []).append(pl)
+    return playlists, needed
+
+
+def sequence_coverage(master, units, exclude=(), playlists=None):
+    """Which remotes lack a sequence that a scheduled playlist plays.
+
+    In MultiSync a remote plays its own copy of each .fseq by name; if the file
+    is missing it simply stays dark. Checks the playlists that are enabled in
+    the player's schedule (or the ones given). Sizes are not compared: xLights
+    can upload per-controller copies that legitimately differ. Read-only."""
+    playlists, needed = scheduled_sequences(master, playlists)
 
     def have(u):
         b = f"http://{master}" if u["is_master"] else (

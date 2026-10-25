@@ -77,6 +77,7 @@ Every controller compared with the fleet policy. Red cells differ from the expec
 
 ### Fleet Management > Sequences
 Every sequence that a playlist in the player's schedule plays must be on every controller: a remote plays its own copy and stays dark if it is missing. The page shows what is missing where. Tick the missing ones and press **Push checked**: xLights (running on this computer) uploads each one as FPP Connect would, cut down to the channels that controller drives (v2 zstd sparse); the player also gets the audio. The copy on the controller is then checked against the show folder's render (same render ID and frame count) and the page rescans.
+- **Check versions** finds copies from an older render: it reads the render ID of each scheduled sequence on the controllers you pick (the dropdown: all, or a few) and compares it with the .fseq in the xLights show folder (or the player's copy when xLights isn't running). The **Render** column shows the result per controller, and older copies are listed with a checkbox, ready for **Push checked**. It only reads, and is refused during a show; the whole fleet takes about two minutes.
 - A tag next to a missing sequence says when xLights can't push it as is: *not in show folder*, *not rendered*, or *render is old* (the .xsq was saved after its last render). Tick **Render first** to render it in xLights before uploading; controllers that already have the sequence keep the old render until they get the new one too.
 - Pushing is refused while the show is playing, and **Render first** is refused while xLights has a sequence open. xLights is busy until the push finishes: don't quit it, or this app, meanwhile.
 - You can still use FPP Connect or FPP's file manager instead; press **Rescan** afterwards. Leave out controllers that aren't in the show by listing them under `coverage_exclude` in the policy.
@@ -119,6 +120,7 @@ tools/flash_card.py --list | work/out/<host>-<ver>.img <diskN>
 tools/verify_unit.py snapshots/<host>/<ts> --via <player-ip> <unit-ip> [--stage work/stage/<host>]
 tools/xlights.py status [<name>.fseq ...]                    # xLights version, show folder (read-only)
 tools/xlights.py push <name>.fseq --hosts a,b [--render]      # upload through xLights, verify
+tools/xlights.py versions --hosts all|a,b                    # render ID of each copy vs the show folder (read-only)
 ```
 
 `fleet.py` uses the player saved in `config/settings.json` unless given `--master`.

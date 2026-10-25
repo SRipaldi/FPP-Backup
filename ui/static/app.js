@@ -404,9 +404,13 @@ async function loadSequences(refresh) {
   try { FLEET = await api("/api/fleet" + (refresh ? "?refresh=1" : "")); PREVIEW = false; renderSequences(); }
   catch (e) { $("#seq-when").innerHTML = `<span class="bad">${esc(e.message)}</span>`; }
 }
-$("#seq-refresh").onclick = () => { XL = null; loadSequences(true); };
+$("#seq-refresh").onclick = () => { XL = null; VERS = null; loadSequences(true); };
 
-let XL = null;
+let XL = null, VERS = null;
+async function loadVersions() {
+  try { VERS = await api("/api/sequences/versions"); } catch (e) { VERS = { units: {}, error: e.message }; }
+  renderSequences();
+}
 async function loadXlights() {
   try { XL = await api("/api/xlights"); } catch (e) { XL = { ok: false, error: e.message }; }
   renderSequences();
@@ -428,6 +432,10 @@ function renderSequences() {
   $("#seq-when").textContent = C.checked ? `Checked ${new Date(C.checked * 1000).toLocaleTimeString()}` : "";
   if (C.error) { $("#seq-summary").innerHTML = `<span class="chip bad">${esc(C.error)}</span>`; $("#seq-units").innerHTML = ""; return; }
   if (XL === null) { XL = false; loadXlights(); }
+  if (VERS === null) { VERS = false; loadVersions(); }
+  renderVersionPicker(C.units || []);
+  const V = (VERS && VERS.units) || {};
+  const older = (h) => V[h]?.outdated || [];
   const gaps = (C.units || []).filter((u) => u.missing?.length);
   const missing = gaps.reduce((n, u) => n + u.missing.length, 0);
   $("#seq-summary").innerHTML = `<span class="chip">Playlists checked: <strong>${(C.playlists || []).map(esc).join(", ") || "none"}</strong></span>
@@ -439,16 +447,70 @@ function renderSequences() {
     ? `xLights ${esc(XL.version)} · show folder <code>${esc(XL.show)}</code>${XL.open ? ` · open: ${esc(XL.open)}` : ""}`
     : `<span class="warn">xLights not available: ${esc(XL.error)}</span> <button class="small" id="seq-xl-retry">Retry</button>`;
   if ($("#seq-xl-retry")) $("#seq-xl-retry").onclick = loadXlights;
-  $("#seq-push-bar").hidden = !missing;
-  $("#seq-units").innerHTML = `<thead><tr><th>Controller</th><th>Sequences</th><th>Missing</th></tr></thead><tbody>` +
+  const nOlder = (C.units || []).reduce((n, u) => n + older(u.host).length, 0);
+  $("#seq-render-wrap").hidden = $("#seq-push").hidden = !missing && !nOlder;
+  const pick = (u, m, label, cls) => `<div><label class="inline ${cls}"><input type="checkbox" class="seq-pick" data-host="${esc(u.host)}" data-seq="${esc(m)}" ${canPush ? "" : "disabled"}> ${esc(m)}</label>${label}${xlTag(m)}</div>`;
+  const verCell = (u) => {
+    const r = V[u.host];
+    if (!r) return '<td class="muted">not checked</td>';
+    const when = `<span class="sub">checked ${new Date(r.checked * 1000).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}</span>`;
+    const tip = VERS.source ? `Compared with the ${esc(VERS.source)}` : "Nothing to compare with";
+    if (r.outdated.length) return `<td class="bad" title="${tip}">${r.outdated.length} older${when}</td>`;
+    if (r.errors.length) return `<td class="warn" title="${esc(r.errors.slice(0, 5).join("\n"))}">${r.errors.length} unreadable${when}</td>`;
+    return `<td class="good" title="${tip}">${r.current} current${when}</td>`;
+  };
+  $("#seq-units").innerHTML = `<thead><tr><th>Controller</th><th>Sequences</th><th title="Whether each copy is from the same render as the show folder's .fseq (Check versions)">Render</th><th>Missing or older render</th></tr></thead><tbody>` +
     (C.units || []).map((u) => `<tr><td><strong>${esc(u.host)}</strong><span class="sub">${esc(u.role || "")}</span></td>
       <td class="${u.error ? "bad" : u.missing?.length ? "bad" : "good"}">${u.error ? "error" : `${u.have} / ${C.needed}`}</td>
-      <td>${u.error ? esc(u.error) : u.missing.length ? u.missing.map((m) => `<div><label class="inline bad"><input type="checkbox" class="seq-pick" data-host="${esc(u.host)}" data-seq="${esc(m)}" ${canPush ? "" : "disabled"}> ${esc(m)}</label>${xlTag(m)}</div>`).join("") : '<span class="muted">none</span>'}</td></tr>`).join("") + "</tbody>";
+      ${verCell(u)}
+      <td>${u.error ? esc(u.error) : u.missing.length || older(u.host).length
+        ? u.missing.map((m) => pick(u, m, "", "bad")).join("") +
+          older(u.host).map((o) => pick(u, o.seq, ' <span class="tag warn" title="Its render ID differs from the show folder\'s .fseq: it is from an older (or different) render">older render</span>', "")).join("")
+        : '<span class="muted">none</span>'}</td></tr>`).join("") + "</tbody>";
   const b = $("#seq-badge"); b.hidden = !missing; b.textContent = missing;
   const sync = () => ($("#seq-push").disabled = !canPush || !document.querySelector(".seq-pick:checked"));
   document.querySelectorAll(".seq-pick").forEach((c) => (c.onchange = sync));
   sync();
 }
+
+// Which controllers Check versions reads: "All" or a pick, kept across redraws.
+const verPicked = new Set();
+let verJob = false;
+function renderVersionPicker(units) {
+  const all = $("#ver-all").checked;
+  $("#ver-hosts").innerHTML = units.filter((u) => !u.error).map((u) =>
+    `<label class="inline"><input type="checkbox" class="ver-host" value="${esc(u.host)}" ${all || verPicked.has(u.host) ? "checked" : ""} ${all ? "disabled" : ""}> ${esc(u.host)}</label>`).join("");
+  document.querySelectorAll(".ver-host").forEach((c) => (c.onchange = () => {
+    c.checked ? verPicked.add(c.value) : verPicked.delete(c.value); syncVersionPicker();
+  }));
+  syncVersionPicker();
+}
+function syncVersionPicker() {
+  const all = $("#ver-all").checked, n = verPicked.size;
+  $("#ver-pick-label").textContent = all ? "All controllers" : n === 1 ? [...verPicked][0] : n ? `${n} controllers` : "Choose controllers";
+  $("#ver-run").disabled = verJob || (!all && !n);
+}
+$("#ver-all").onchange = () => renderVersionPicker(FLEET?.coverage?.units || []);
+document.addEventListener("click", (e) => { if (!e.target.closest("#ver-pick")) $("#ver-pick").open = false; });
+
+$("#ver-run").onclick = async () => {
+  const hosts = $("#ver-all").checked ? "all" : [...verPicked];
+  $("#ver-pick").open = false;
+  let job;
+  try { job = await api("/api/sequences/versions", { hosts }); } catch (e) { return toast(e.message); }
+  verJob = true; syncVersionPicker();
+  const state = $("#ver-state");
+  state.textContent = "Starting…";
+  const es = new EventSource(`/api/jobs/${job.id}/stream`);
+  es.addEventListener("progress", (e) => (state.textContent = JSON.parse(e.data).trim()));
+  es.addEventListener("line", (e) => { const l = JSON.parse(e.data); if (!l.startsWith("$ ")) state.textContent = l; });
+  es.addEventListener("status", async (e) => {
+    es.close(); verJob = false;
+    const s = JSON.parse(e.data);
+    state.innerHTML = s === "done" ? "Versions checked: every copy is current." : `<span class="warn">Done: see the Render column</span> · <a href="#jobs">log</a>`;
+    await loadVersions();
+  });
+};
 
 $("#seq-push").onclick = () => {
   const items = [...document.querySelectorAll(".seq-pick:checked")].map((c) => ({ seq: c.dataset.seq, host: c.dataset.host }));
@@ -458,7 +520,7 @@ $("#seq-push").onclick = () => {
   if (stale.length && !render) return toast(`${stale[0].seq} needs a render first: tick Render first`);
   if (render && XL.open) return toast(`xLights has ${XL.open} open; close it first`);
   const lines = items.map((i) => `  ${i.seq} → ${i.host}`).join("\n");
-  if (!confirm(`Upload ${items.length} sequence file(s) through xLights?\n\n${lines}\n\n` +
+  if (!confirm(`Upload ${items.length} sequence file(s) through xLights? Older copies are replaced.\n\n${lines}\n\n` +
     (render ? "Each sequence is rendered first; controllers that already have it keep the old render until they get the new one.\n" : "") +
     "This writes to the controllers. Not done while the show is playing. xLights is busy until it finishes; don't quit it or this app meanwhile.")) return;
   act("/api/xlights/push", { items, render });
