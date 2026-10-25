@@ -9,8 +9,8 @@ Snapshots contain secrets (Wi-Fi PSK, osPassword, .htpasswd) and must never be
 committed. snapshots/ is in .gitignore.
 
 Usage:
-  tools/snapshot.py http://172.1.2.16                  # direct
-  tools/snapshot.py --via 172.1.2.10 192.168.1.55      # through the player's proxy
+  tools/snapshot.py http://<unit-ip>                   # direct
+  tools/snapshot.py --via <player-ip> <unit-ip>       # through the player's proxy
 """
 import argparse
 import hashlib

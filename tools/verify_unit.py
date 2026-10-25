@@ -6,8 +6,8 @@ config files, content and media must match what the snapshot (and the staged
 settings) say, and FPP's own boot must have completed.
 
 Usage:
-  tools/verify_unit.py snapshots/FPP-Side/<ts> --via 172.1.2.10 192.168.1.59 \\
-      [--stage work/stage/FPP-Side]
+  tools/verify_unit.py snapshots/<host>/<ts> --via <player-ip> <unit-ip> \\
+      [--stage work/stage/<host>]
 """
 import argparse
 import hashlib
