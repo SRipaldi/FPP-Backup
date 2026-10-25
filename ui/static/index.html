@@ -109,39 +109,9 @@
       <button id="fleet-refresh">Rescan</button>
     </div>
     <div id="fleet-summary" class="chips"></div>
-    <div class="bar fleet-actions">
-      <button id="policy-toggle">Edit policy</button>
-      <span class="muted small">Change what "matching" means, preview the effect on the whole fleet, then save. Nothing is sent to the controllers until you press Update.</span>
-    </div>
     <div id="fleet-preview-banner" class="note-box preview-banner" hidden>
-      <strong>Preview of an unsaved policy.</strong> The tables below show what would drift if you saved it. Updating is disabled until you save.
+      <strong>Preview of an unsaved policy</strong> from Settings. The tables below show what would drift if you saved it; updating is disabled until you do. <a href="#settings">Back to Settings</a>
     </div>
-    <section id="policy-editor" class="policy-editor" hidden>
-      <div class="row">
-        <label class="inline">Expected FPP version <input id="pol-version" class="narrow"></label>
-      </div>
-      <h3>Settings that must match</h3>
-      <div class="table-wrap"><table id="pol-match" class="grid policy"></table></div>
-      <div class="row add-row">
-        <select id="pol-add-name"></select>
-        <button id="pol-add" class="small">Add setting</button>
-      </div>
-      <datalist id="pol-values"></datalist>
-      <h3>Compare among remotes <span class="muted small">flagged only when remotes disagree</span></h3>
-      <div id="pol-compare" class="chips"></div>
-      <div class="row add-row"><select id="pol-compare-add"></select><button id="pol-compare-btn" class="small">Add</button></div>
-      <h3>Different by design <span class="muted small">shown, never flagged</span></h3>
-      <div id="pol-perunit" class="chips"></div>
-      <div class="row add-row"><select id="pol-perunit-add"></select><button id="pol-perunit-btn" class="small">Add</button></div>
-      <div class="bar policy-buttons">
-        <span id="pol-status" class="muted small"></span>
-        <div class="row">
-          <button id="pol-discard">Discard changes</button>
-          <button id="pol-preview">Preview</button>
-          <button id="pol-save" class="primary">Save policy</button>
-        </div>
-      </div>
-    </section>
 
     <h2 class="section">Controllers</h2>
     <div class="table-wrap"><table id="fleet-units"></table></div>
@@ -267,6 +237,33 @@
       <li>
         <h2>Fleet policy <span class="muted small">what should match across controllers</span></h2>
         <p id="set-pol" class="note"></p>
+        <div id="policy-editor" class="policy-editor">
+          <div class="row">
+            <label class="inline">Expected FPP version <input id="pol-version" class="narrow"></label>
+          </div>
+          <h3>Settings that must match</h3>
+          <div class="table-wrap"><table id="pol-match" class="grid policy"></table></div>
+          <div class="row add-row">
+            <select id="pol-add-name"></select>
+            <button id="pol-add" class="small">Add setting</button>
+          </div>
+          <datalist id="pol-values"></datalist>
+          <h3>Compare among remotes <span class="muted small">flagged only when remotes disagree</span></h3>
+          <div id="pol-compare" class="chips"></div>
+          <div class="row add-row"><select id="pol-compare-add"></select><button id="pol-compare-btn" class="small">Add</button></div>
+          <h3>Different by design <span class="muted small">shown, never flagged</span></h3>
+          <div id="pol-perunit" class="chips"></div>
+          <div class="row add-row"><select id="pol-perunit-add"></select><button id="pol-perunit-btn" class="small">Add</button></div>
+          <div id="pol-preview-result" class="note-box" hidden></div>
+          <div class="bar policy-buttons">
+            <span id="pol-status" class="muted small"></span>
+            <div class="row">
+              <button id="pol-discard">Discard changes</button>
+              <button id="pol-preview">Preview</button>
+              <button id="pol-save" class="primary">Save policy</button>
+            </div>
+          </div>
+        </div>
       </li>
       <li>
         <h2>Monitoring and checks</h2>

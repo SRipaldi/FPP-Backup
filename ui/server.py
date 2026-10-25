@@ -503,8 +503,8 @@ def load_policy():
     own settings, the first time it is needed."""
     if not fleet.POLICY.exists():
         fleet.create_policy(need_player())
-        notify("info", "Created the fleet policy from the template using your player's settings. Review it on the Fleet page.",
-               "fleet", key="policy-created")
+        notify("info", "Created the fleet policy from the template using your player's settings. Review it under Settings > Fleet policy.",
+               "settings", key="policy-created")
     return fleet.load_policy()
 
 

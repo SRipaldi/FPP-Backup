@@ -484,8 +484,10 @@ async function loadSettings() {
   $("#set-inv").innerHTML = !SETTINGS.inventory ? '<span class="warn">No inventory yet.</span>'
     : `${SETTINGS.inventory_count} controller${SETTINGS.inventory_count === 1 ? "" : "s"} in <code>${esc(SETTINGS.files.inventory)}</code>.`;
   $("#set-inv-build").disabled = !SETTINGS.active_player;
+  $("#policy-editor").hidden = !SETTINGS.policy || !SETTINGS.active_player;
+  if (SETTINGS.policy && SETTINGS.active_player) openPolicyEditor(true);
   $("#set-pol").innerHTML = SETTINGS.policy
-    ? `In <code>${esc(SETTINGS.files.policy)}</code>. Edit it on the Fleet page (<strong>Edit policy</strong>).`
+    ? `In <code>${esc(SETTINGS.files.policy)}</code>. Change what should match, <strong>Preview</strong> the effect on the fleet, then <strong>Save</strong>. Apply the result to the controllers from the Fleet page.`
     : "Not created yet. On the first scan it is created from <code>templates/fleet-policy.json</code>, with every value taken from your player's own settings, so your fleet starts out matching its player.";
   $("#set-files").innerHTML = `Settings, inventory and policy are saved in <code>config/</code>: this computer only, not in Git.`;
   $("#set-test-result").textContent = SETTINGS.active_player ? `Active player: ${SETTINGS.active_player}` : "";
@@ -764,26 +766,32 @@ const clone = (o) => JSON.parse(JSON.stringify(o));
 const dirty = () => DRAFT && JSON.stringify(DRAFT) !== JSON.stringify(SAVED_POLICY);
 const byCount = (name) => Object.entries(CATALOG[name]?.values || {}).sort((a, b) => b[1] - a[1]).map(([v]) => v);
 
-$("#policy-toggle").onclick = () => (POLICY_OPEN ? closePolicyEditor() : openPolicyEditor());
-
+// The editor lives on the Settings page. It needs a scan for its suggestions
+// (the values each setting has across the fleet), so it starts one if needed.
 async function openPolicyEditor(keepDraft) {
-  const d = await api("/api/fleet/policy");
+  let d = await api("/api/fleet/policy");
+  if (!Object.keys(d.catalog || {}).length && !FLEET) {
+    policyStatus("Scanning the fleet for suggestions (about 30 seconds)…");
+    try { FLEET = await api("/api/fleet"); d = await api("/api/fleet/policy"); } catch {}
+  }
   CATALOG = d.catalog || {};
   const hadChanges = keepDraft && dirty();
   SAVED_POLICY = d.policy;
   if (!hadChanges) DRAFT = clone(d.policy);
   POLICY_OPEN = true;
-  $("#policy-editor").hidden = false;
-  $("#policy-toggle").textContent = "Close policy editor";
   renderPolicyEditor();
 }
 
-function closePolicyEditor() {
-  if (dirty() && !confirm("Close the editor and discard unsaved policy changes?")) return;
-  POLICY_OPEN = false;
-  $("#policy-editor").hidden = true;
-  $("#policy-toggle").textContent = "Edit policy";
-  if (PREVIEW) loadFleet(false);
+function showPreviewResult(rep) {
+  const box = $("#pol-preview-result");
+  const rows = rep.match.filter((r) => r.drift);
+  const ver = rep.units.filter((u) => u.online && !u.version_ok);
+  box.hidden = false;
+  box.innerHTML = `<strong>Preview:</strong> ${rows.length ? `${rows.length} setting${rows.length === 1 ? "" : "s"} would drift` : "no setting would drift"}` +
+    (ver.length ? `, and ${ver.length} controller${ver.length === 1 ? " is" : "s are"} not on FPP ${esc(rep.policy.fpp_version)}` : "") + "." +
+    (rows.length ? "<ul>" + rows.map((r) => `<li><strong>${esc(r.name)}</strong> on ${Object.entries(r.cells).filter(([, c]) => c.status === "drift").map(([h]) => esc(h)).join(", ")}</li>`).join("") + "</ul>" : "") +
+    `<button class="small" id="pol-see-fleet">See it on the Fleet page →</button>`;
+  $("#pol-see-fleet").onclick = () => showTab("fleet");
 }
 
 function policyStatus(text) {
@@ -862,7 +870,7 @@ $("#pol-preview").onclick = async () => {
   try {
     FLEET = await api("/api/fleet/preview", { policy: DRAFT });
     PREVIEW = dirty();
-    renderFleet();
+    showPreviewResult(FLEET);
     const n = FLEET.match.filter((r) => r.drift).length;
     policyStatus(`${PREVIEW ? "Previewing unsaved changes" : "No changes"}: ${n} setting(s) would drift. ${PREVIEW ? "Save to keep them." : ""}`);
   } catch (e) { toast(e.message); }
@@ -872,7 +880,7 @@ $("#pol-save").onclick = async () => {
   try {
     FLEET = await api("/api/fleet/policy", { policy: DRAFT });
     PREVIEW = false;
-    renderFleet();
+    $("#pol-preview-result").hidden = true;
     await openPolicyEditor(false);
     toast("Policy saved. Drifting settings can now be updated.");
   } catch (e) { toast(e.message); }
@@ -880,7 +888,8 @@ $("#pol-save").onclick = async () => {
 $("#pol-discard").onclick = async () => {
   DRAFT = clone(SAVED_POLICY);
   renderPolicyEditor();
-  if (PREVIEW) await loadFleet(false);
+  $("#pol-preview-result").hidden = true;
+  if (PREVIEW) { PREVIEW = false; FLEET = null; }
 };
 
 setInterval(() => { if (!$("#tab-jobs").hidden || !$("#jobs-badge").hidden) loadJobs(); }, 3000);

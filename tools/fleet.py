@@ -266,7 +266,7 @@ def create_policy(master, path=POLICY):
             default = next((v for label, v in meta["options"].items() if "(Default)" in str(label)), None)
         rule["value"] = effective({"value": entry.get("value"), "default": default, "type": meta.get("type")})
     tpl["_comment"] = (f"Created from templates/fleet-policy.json using {info.get('HostName', master)}'s settings. "
-                       "Edit it on the Fleet page (Edit policy).")
+                       "Edit it in the UI under Settings > Fleet policy.")
     policy = validate_policy(tpl)
     Path(path).parent.mkdir(parents=True, exist_ok=True)
     Path(path).write_text(json.dumps(policy, indent=2) + "\n")

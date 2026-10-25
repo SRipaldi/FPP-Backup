@@ -22,9 +22,10 @@ Opens `http://127.0.0.1:8765/`. Start it from Terminal or VS Code so the macOS a
 
 - **Dashboard**: controllers online vs expected, policy drift, versions and available updates, backups due, sequence coverage, the show, and what needs attention.
 - **Backup > Controllers**: back up the selected controllers (configuration, optionally media).
-- **Fleet Management > Fleet**: compare every controller with the fleet policy, edit the policy, update drifting settings. **Sequences**: every sequence the schedule plays must be on every controller.
+- **Fleet Management > Fleet**: compare every controller with the fleet policy and update drifting settings. **Sequences**: every sequence the schedule plays must be on every controller.
 - **Show > Live**: during a show, whether each remote plays the same sequence at the same point and receives the player's sync.
 - **Image Management**: build a card image from a backup, flash and verify an SD card.
+- **Settings** (bottom of the sidebar): the player address, the controller inventory, the fleet policy editor (what should match, with a preview of the effect before saving), monitoring and update checks.
 - **Notifications** (bell): controllers going offline, dark remotes during a show, failed jobs, drift, missing sequences, new releases.
 
 ## Command line
