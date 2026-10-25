@@ -32,7 +32,7 @@ async function act(path, body) {
 function showTab(name) {
   document.querySelectorAll("nav button").forEach((b) => b.classList.toggle("active", b.dataset.tab === name));
   document.querySelectorAll("main section").forEach((s) => (s.hidden = s.id !== "tab-" + name));
-  ({ build: loadBuild, flash: loadFlash, jobs: loadJobs }[name] || (() => {}))();
+  ({ build: loadBuild, flash: loadFlash, jobs: loadJobs, fleet: () => FLEET ? renderFleet() : loadFleet(false) }[name] || (() => {}))();
 }
 document.querySelectorAll("nav button").forEach((b) => (b.onclick = () => showTab(b.dataset.tab)));
 
@@ -193,6 +193,133 @@ function openJob(id) {
     prog.innerHTML = `<span class="${s === "done" ? "good" : "bad"}">${s === "done" ? "Finished" : "Failed"}</span>`;
     source.close(); source = null; loadJobs();
   });
+}
+
+// ------------------------------------------------------------ fleet
+let FLEET = null;
+const pendingRestart = { hosts: new Set(), names: new Set() };
+const shortHost = (h) => h.replace(/^FPP-/, "");
+const shown = (v) => v === null || v === undefined ? "—" : v === "" ? "(blank)" : v;
+
+async function loadFleet(refresh) {
+  $("#fleet-when").textContent = "Scanning every controller (about 20 seconds)…";
+  $("#fleet-refresh").disabled = true;
+  try {
+    FLEET = await api("/api/fleet" + (refresh ? "?refresh=1" : ""));
+    renderFleet();
+  } catch (e) {
+    $("#fleet-when").innerHTML = `<span class="bad">${esc(e.message)}</span>`;
+  } finally { $("#fleet-refresh").disabled = false; }
+}
+$("#fleet-refresh").onclick = () => loadFleet(true);
+
+function renderFleet() {
+  const F = FLEET, units = F.units, on = units.filter((u) => u.online);
+  const master = on.find((u) => u.is_master);
+  const hosts = on.map((u) => u.host);
+  const driftRows = F.match.filter((r) => r.drift);
+  const oldVer = on.filter((u) => !u.version_ok);
+  const disagree = F.compare.concat(F.other).filter((r) => r.remotes_differ);
+  const offline = units.filter((u) => !u.online);
+  const clockBad = on.filter((u) => u.offset_s !== null && Math.abs(u.offset_s) > 2);
+  $("#fleet-when").innerHTML = `Scanned ${new Date(F.scanned * 1000).toLocaleTimeString()}. Compares every controller with <code>fleet-policy.json</code>; scanning only reads.`;
+  const chip = (n, label, bad) => `<span class="chip ${bad ? "bad" : "ok"}"><strong>${n}</strong>${label}</span>`;
+  $("#fleet-summary").innerHTML = [
+    chip(on.length, `online${offline.length ? `, ${offline.length} offline` : ""}`, offline.length),
+    chip(driftRows.length, "policy settings drifting", driftRows.length),
+    chip(oldVer.length, `not on FPP ${esc(F.policy.fpp_version)}`, oldVer.length),
+    chip(clockBad.length, "clocks off by more than 2 s", clockBad.length),
+    chip(disagree.length, "settings remotes disagree on", disagree.length),
+  ].join("");
+  const badge = $("#fleet-badge");
+  badge.hidden = !(driftRows.length + oldVer.length + clockBad.length);
+  badge.textContent = driftRows.length + oldVer.length + clockBad.length;
+
+  // controllers
+  const pct = (u) => u.disk_total ? Math.round(100 * u.disk_free / u.disk_total) + "% free" : "";
+  $("#fleet-units").innerHTML = `<thead><tr><th>Controller</th><th>FPP</th><th>Hardware</th><th>Address</th><th>Clock</th><th>Uptime</th><th>Storage</th></tr></thead><tbody>` +
+    units.map((u) => !u.online ? `<tr class="offline"><td><span class="dot off"></span><strong>${esc(u.host)}</strong></td><td colspan="6">offline · last known ${esc(u.ip)}</td></tr>` : `
+      <tr><td><span class="dot ${u.status === "playing" ? "play" : "on"}"></span><strong>${esc(u.host)}</strong><span class="sub">${esc(u.role)}${u.status ? " · " + esc(u.status) : ""}</span></td>
+        <td class="${u.version_ok ? "" : "bad"}">${esc(u.version)}<span class="sub">${esc(u.os_version || "")}</span></td>
+        <td>${esc(u.variant || u.platform || "")}${u.cape ? `<span class="sub">cape ${esc(u.cape)}</span>` : ""}</td>
+        <td>${esc(u.ip)}${u.via ? `<span class="sub">via player</span>` : ""}</td>
+        <td class="${u.offset_s !== null && Math.abs(u.offset_s) > 2 ? "bad" : ""}">${u.offset_s === null ? "?" : (u.offset_s > 0 ? "+" : "") + u.offset_s + " s"}<span class="sub">${esc((u.clock || "").replace(/^\w+ /, "").replace(/ \d{4}$/, ""))}</span></td>
+        <td>${esc(u.uptime || "")}</td><td>${pct(u)}</td></tr>`).join("") + "</tbody>";
+
+  const head = (first) => `<thead><tr>${first}${hosts.map((h) => `<th class="unit" title="${esc(h)}">${esc(shortHost(h))}${h === master?.host ? " ★" : ""}</th>`).join("")}<th></th></tr></thead>`;
+
+  // policy settings
+  const verRow = `<tr><td><strong>FPP version</strong><span class="why">Upgrade by building a card</span></td><td>${esc(F.policy.fpp_version)}</td>` +
+    on.map((u) => `<td class="cell ${u.version_ok ? "ok" : "odd"}" title="${esc(u.version)}">${u.version_ok ? "✓" : esc(u.version)}</td>`).join("") + "<td></td></tr>";
+  $("#fleet-match").innerHTML = head("<th>Setting</th><th>Expected</th>") + "<tbody>" + F.match.map((r) => `
+    <tr><td><strong>${esc(r.name)}</strong><span class="why">${esc(r.why || r.description)}${r.needs ? ` · needs player ${r.needs}` : ""}</span></td>
+      <td>${esc(r.expected === "@master" ? "the player" : shown(r.expected))}</td>` +
+    hosts.map((h) => {
+      const c = r.cells[h] || { status: "n/a" };
+      const cls = c.status === "n/a" ? "na" : c.status;
+      const text = c.status === "ok" ? "✓" : c.status === "n/a" ? "n/a" : esc(shown(c.value));
+      return `<td class="cell ${cls}" title="${esc(h)}: ${esc(shown(c.value))}${c.expected !== undefined && c.expected !== null ? " (expected " + esc(shown(c.expected)) + ")" : ""}"
+        ${c.status === "drift" ? `data-expect="${esc(r.name)}" data-value="${esc(c.value)}"` : ""}>${text}</td>`;
+    }).join("") +
+    `<td>${r.drift ? `<button class="small primary" data-apply="${esc(r.name)}">Apply to ${r.drift}</button>` : ""}</td></tr>`).join("") + verRow + "</tbody>";
+
+  document.querySelectorAll("[data-apply]").forEach((b) => (b.onclick = () => applySetting(b.dataset.apply)));
+  document.querySelectorAll("td[data-expect]").forEach((td) => (td.onclick = () => makeExpected(td.dataset.expect, td.dataset.value)));
+
+  // remotes that disagree
+  const valueRow = (r, withAction) => {
+    const remoteVals = [...new Set(hosts.filter((h) => h !== master?.host).map((h) => r.cells[h]).filter((v) => v !== null && v !== undefined))];
+    const counts = {};
+    hosts.filter((h) => h !== master?.host).forEach((h) => (counts[r.cells[h]] = (counts[r.cells[h]] || 0) + 1));
+    const common = Object.keys(counts).sort((a, b) => counts[b] - counts[a])[0];
+    return `<tr><td><strong>${esc(r.name)}</strong><span class="why">${esc(r.description || "")}</span></td>` +
+      hosts.map((h) => {
+        const v = r.cells[h];
+        const odd = withAction && h !== master?.host && v !== common;
+        return `<td class="cell ${h === master?.host ? "na" : odd ? "odd" : ""}" title="${esc(h)}">${esc(shown(v))}</td>`;
+      }).join("") +
+      (withAction ? `<td><select data-for="${esc(r.name)}">${remoteVals.map((v) => `<option value="${esc(v)}" ${v === common ? "selected" : ""}>${esc(shown(v))}</option>`).join("")}</select>
+        <button class="small" data-promote="${esc(r.name)}">Make expected</button></td>` : "<td></td>") + "</tr>";
+  };
+  $("#fleet-compare").innerHTML = disagree.length ? head("<th>Setting</th>") + "<tbody>" + disagree.map((r) => valueRow(r, true)).join("") + "</tbody>"
+    : '<tbody><tr><td class="muted">All remotes agree on every compared setting.</td></tr></tbody>';
+  document.querySelectorAll("[data-promote]").forEach((b) => (b.onclick = () =>
+    makeExpected(b.dataset.promote, document.querySelector(`select[data-for="${b.dataset.promote}"]`).value)));
+  $("#fleet-perunit").innerHTML = head("<th>Setting</th>") + "<tbody>" + F.per_unit.map((r) => valueRow(r, false)).join("") + "</tbody>";
+  renderRestartNote();
+}
+
+async function applySetting(name) {
+  const r = FLEET.match.find((x) => x.name === name);
+  const drifted = Object.entries(r.cells).filter(([, c]) => c.status === "drift");
+  const lines = drifted.map(([h, c]) => `  ${h}: ${shown(c.value)} → ${shown(c.expected)}`).join("\n");
+  if (!confirm(`Change ${name} on ${drifted.length} controller(s)?\n\n${lines}\n\nThis writes to the controllers.`)) return;
+  if (r.needs) { drifted.forEach(([h]) => pendingRestart.hosts.add(h)); pendingRestart.names.add(name); }
+  FLEET = null;
+  await act("/api/fleet/apply", { setting: name });
+}
+
+async function makeExpected(name, value) {
+  if (!confirm(`Make "${shown(value)}" the expected ${name} for the whole fleet?\n\nThis only edits fleet-policy.json; nothing is sent to the controllers. Use Apply afterwards to change the units that differ.`)) return;
+  try {
+    await api("/api/fleet/expect", { setting: name, value });
+    toast(`${name}: expected value is now ${shown(value)}. Rescanning…`);
+    await loadFleet(true);
+  } catch (e) { toast(e.message); }
+}
+
+function renderRestartNote() {
+  const box = $("#fleet-restart-note");
+  if (!pendingRestart.hosts.size) { box.hidden = true; return; }
+  const hosts = [...pendingRestart.hosts];
+  box.hidden = false;
+  box.innerHTML = `<strong>${esc([...pendingRestart.names].join(", "))}</strong> take effect after a player restart on ${esc(hosts.join(", "))}.
+    <button class="small" id="fleet-do-restart">Restart those players</button> <span class="muted small">Units that are playing are skipped.</span>`;
+  $("#fleet-do-restart").onclick = async () => {
+    if (!confirm(`Restart the FPP player on ${hosts.join(", ")}?\n\nEach is down for a few seconds. Units that are playing are skipped.`)) return;
+    pendingRestart.hosts.clear(); pendingRestart.names.clear();
+    await act("/api/fleet/restart", { hosts });
+  };
 }
 
 setInterval(() => { if (!$("#tab-jobs").hidden || !$("#jobs-badge").hidden) loadJobs(); }, 3000);

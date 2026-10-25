@@ -15,7 +15,6 @@ the macOS admin dialog, which needs your login session.
 Usage: python3 ui/server.py [--master 172.1.2.10] [--port 8765] [--no-browser]
 """
 import argparse
-import concurrent.futures
 import json
 import os
 import re
@@ -38,6 +37,7 @@ OUT = ROOT / "work/out"
 PY = sys.executable
 
 sys.path.insert(0, str(TOOLS))
+import fleet  # noqa: E402
 import get_image  # noqa: E402
 
 TOKEN = secrets.token_urlsafe(24)
@@ -149,46 +149,15 @@ def snapshots():
 
 
 def controllers():
-    master = CONFIG["master"]
-    systems = fetch_json(f"http://{master}/api/fppd/multiSyncSystems", timeout=8).get("systems", [])
-    by_host = {}
-    for s in systems:
-        addr = s.get("address", "")
-        if not re.match(r"^\d+\.\d+\.\d+\.\d+$", addr):
-            continue
-        by_host.setdefault(s.get("hostname"), []).append(addr)
-
-    def probe(host, addrs):
-        # The multisync list can be stale, so ask each unit who it is. The
-        # player itself is reached directly; others through its proxy, falling
-        # back to direct (the proxy cannot reach every subnet, e.g. smPanel).
-        routes = [(a, None) for a in addrs if a == master]
-        routes += [(a, master) for a in addrs if a != master]
-        routes += [(a, None) for a in addrs if a != master]
-        for a, via in routes:
-            base = f"http://{via}/proxy/{a}" if via else f"http://{a}"
-            try:
-                info = fetch_json(f"{base}/api/system/info", timeout=4 if via else 2)
-            except Exception:
-                continue
-            if info.get("HostName") and info["HostName"] != host:
-                continue
-            return {"host": info.get("HostName", host), "ip": a, "via": via,
-                    "online": True, "version": info.get("Version"), "platform": info.get("Platform"),
-                    "variant": info.get("SubPlatform") or info.get("Variant"),
-                    "mode": info.get("Mode"), "cape": (info.get("capeInfo") or {}).get("name"),
-                    "addresses": addrs, "image_family": get_image.asset_for_platform(
-                        info.get("Platform", ""), info.get("SubPlatform", ""))}
-        return {"host": host, "ip": addrs[0], "online": False, "addresses": addrs}
-
-    with concurrent.futures.ThreadPoolExecutor(8) as ex:
-        found = list(ex.map(lambda kv: probe(*kv), by_host.items()))
+    found = fleet.discover(CONFIG["master"])
     snaps = snapshots()
     for c in found:
+        c.pop("base", None)
+        c["image_family"] = get_image.asset_for_platform(c.get("platform") or "", c.get("variant") or "")
         mine = [s for s in snaps if s["host"] == c["host"]]
         c["last_snapshot"] = mine[-1]["taken"] if mine else None
         c["snapshots"] = len(mine)
-    return sorted(found, key=lambda c: (c["host"] != CONFIG.get("master_host"), c["host"].lower()))
+    return found
 
 
 _releases = {"t": 0, "data": None}
@@ -286,7 +255,82 @@ def act_flash(body):
                      [[PY, TOOLS / "flash_card.py", image, disk, "--yes"]], exclusive="flash")
 
 
-ACTIONS = {"snapshot": act_snapshot, "download": act_download, "build": act_build, "flash": act_flash}
+# ---------------------------------------------------------------- fleet
+
+_fleet = {"t": 0, "data": None, "lock": threading.Lock()}
+
+
+def fleet_report(refresh=False):
+    """tools/fleet.py's drift report, cached: a full scan takes ~20 s."""
+    with _fleet["lock"]:
+        if refresh or _fleet["data"] is None or time.time() - _fleet["t"] > 300:
+            _fleet["data"] = fleet.drift_report(CONFIG["master"])
+            _fleet["t"] = time.time()
+        return _fleet["data"]
+
+
+def load_policy():
+    return json.loads(fleet.POLICY.read_text())
+
+
+def act_fleet_apply(body):
+    """Set a policy setting to its expected value on the units that drift."""
+    name = body["setting"]
+    policy = load_policy()
+    rule = policy["match"].get(name)
+    rep = _fleet["data"]
+    if not rule or not rep:
+        raise ValueError(f"{name} is not a policy setting, or the fleet has not been scanned")
+    row = next(r for r in rep["match"] if r["name"] == name)
+    drifted = [h for h, c in row["cells"].items() if c["status"] == "drift"]
+    if not drifted:
+        raise ValueError(f"no unit drifts on {name}")
+    master_host = next((u["host"] for u in rep["units"] if u.get("is_master")), None)
+    others = [h for h in drifted if h != master_host]
+    steps = []
+    if others:
+        value = "master" if rule["value"] == "@master" else rule["value"]
+        steps.append([PY, TOOLS / "fleet.py", "--master", CONFIG["master"], "set", name, value,
+                      "--hosts", ",".join(others)])
+    if master_host in drifted:
+        value = rule.get("master_value", rule["value"])
+        steps.append([PY, TOOLS / "fleet.py", "--master", CONFIG["master"], "set", name, value,
+                      "--hosts", master_host])
+    _fleet["t"] = 0  # rescan on next view
+    return start_job("fleet", f"Set {name} on {', '.join(drifted)}", steps, exclusive="fleet")
+
+
+def act_fleet_expect(body):
+    """Make a value the expected one (or promote a compared setting into the policy).
+    Edits fleet-policy.json only; nothing is sent to a controller."""
+    name, value = body["setting"], str(body["value"])
+    if not re.match(r"^[\w\-]+$", name) or len(value) > 200 or "\n" in value:
+        raise ValueError("bad setting or value")
+    policy = load_policy()
+    rep = _fleet["data"] or {}
+    known = {r["name"] for k in ("match", "compare", "other") for r in rep.get(k, [])}
+    if name not in policy["match"] and name not in known:
+        raise ValueError(f"unknown setting {name}")
+    rule = policy["match"].setdefault(name, {"why": "Added from the Fleet page"})
+    rule["value"] = value
+    if name in policy["compare"]:
+        policy["compare"].remove(name)
+    fleet.POLICY.write_text(json.dumps(policy, indent=2) + "\n")
+    _fleet["t"] = 0
+    return None
+
+
+def act_fleet_restart(body):
+    hosts = [h for h in body.get("hosts", []) if re.match(r"^[\w\-]+$", h)]
+    if not hosts:
+        raise ValueError("no hosts")
+    return start_job("fleet", f"Restart players on {', '.join(hosts)}",
+                     [[PY, TOOLS / "fleet.py", "--master", CONFIG["master"], "restart", "--hosts", ",".join(hosts)]],
+                     exclusive="fleet")
+
+
+ACTIONS = {"snapshot": act_snapshot, "download": act_download, "build": act_build, "flash": act_flash,
+           "fleet/apply": act_fleet_apply, "fleet/expect": act_fleet_expect, "fleet/restart": act_fleet_restart}
 
 
 # ---------------------------------------------------------------- http
@@ -332,6 +376,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send(200, {"stock": files_in(IMAGES, "*.img"), "built": files_in(OUT, "*.img")})
             if path == "/api/cards":
                 return self.send(200, cards())
+            if path == "/api/fleet":
+                return self.send(200, fleet_report(refresh="refresh=1" in self.path))
             if path == "/api/jobs":
                 return self.send(200, [j.summary() for j in sorted(JOBS.values(), key=lambda j: -j.started)])
             m = re.match(r"^/api/jobs/(\w+)/stream$", path)
@@ -344,13 +390,13 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         if not self.local_host() or self.headers.get("X-Token") != TOKEN:
             return self.send(403, {"error": "forbidden"})
-        m = re.match(r"^/api/(\w+)$", self.path)
+        m = re.match(r"^/api/([\w/]+)$", self.path)
         if not m or m.group(1) not in ACTIONS:
             return self.send(404, {"error": "not found"})
         try:
             body = json.loads(self.rfile.read(int(self.headers.get("Content-Length") or 0)) or b"{}")
             job = ACTIONS[m.group(1)](body)
-            self.send(200, job.summary())
+            self.send(200, job.summary() if job else {"ok": True})
         except (KeyError, ValueError, RuntimeError) as e:
             self.send(400, {"error": str(e)})
 

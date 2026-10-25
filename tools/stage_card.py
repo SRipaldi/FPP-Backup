@@ -5,13 +5,15 @@ The staged tree is what tools/build_image.sh copies into the image's root
 partition: the settings file plus config, playlists, scripts and media.
 
 No BootActions=settings, although FPP's own restore sets it: its handler runs
-`systemctl enable --now` for Service_* settings from inside `fppinit start`,
-and rsync is ordered after network.target, which waits for fppinit. The two
-deadlock until the 60 s watchdog kills fppinit, so setupNetwork and everything
-after it never runs (seen on FPP-Side, 10.3). What that action would do is
-written to <out>.rootfs.sh instead, for build_image.sh to apply to the image:
-chrony's NTP server and service enablement. Time zone needs nothing; fppinit
-applies it every boot.
+inside `fppinit start`, and on FPP-Side's first 10.3 boot fppinit stopped
+there until the 60 s watchdog killed it, so setupNetwork and everything after
+it never ran. The handler makes synchronous systemctl calls that can wait on
+units ordered after fppinit (`systemctl restart chrony` for ntpServer, and
+`service apache2 reload` from the password setting); see
+fpp-issues/04-boot-actions-stall.md. (Service_* changes are backgrounded and
+are not the cause.) What that action would do is written to <out>.rootfs.sh
+instead, for build_image.sh to apply to the image: chrony's NTP server and
+service enablement. Time zone needs nothing; fppinit applies it every boot.
 
 10.x shows its setup page until LegalJurisdiction and the privacy settings are
 in the settings file. Ones the source lacks are taken from --reference, a

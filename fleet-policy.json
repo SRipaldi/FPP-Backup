@@ -1,0 +1,30 @@
+{
+  "_comment": "Fleet configuration policy, read by tools/fleet.py drift and the UI's Fleet tab. 'match' settings must have the expected value on every unit (or role); 'compare' settings are only flagged when units in the same role disagree. '@master' means the player's address on the unit's own subnet; master_value applies to the player itself. Values are compared after an unset setting falls back to its schema default.",
+  "master": "172.1.2.10",
+  "fpp_version": "10.3",
+  "match": {
+    "TimeZone": {"value": "America/Los_Angeles", "equivalent": ["US/Pacific"], "why": "Same clock everywhere; US/Pacific is missing on 10.x images"},
+    "ntpServer": {"value": "@master", "master_value": "", "why": "Remotes sync time from the player; the player from the internet pool"},
+    "Latitude": {"value": "<latitude>", "why": "Sunrise/sunset schedule times"},
+    "Longitude": {"value": "<longitude>", "why": "Sunrise/sunset schedule times"},
+    "Locale": {"value": "USA", "why": "Holiday list used by schedules"},
+    "temperatureInF": {"value": "1", "why": "Display units"},
+    "LegalJurisdiction": {"value": "US", "min_version": 10, "why": "10.x setup page"},
+    "statsPublish": {"value": "Disabled", "why": "Privacy"},
+    "ShareCrashData": {"value": "0", "why": "Privacy"},
+    "FetchVendorLogos": {"value": "0", "why": "Privacy"},
+    "SendVendorSerial": {"value": "0", "why": "Privacy"},
+    "passwordEnable": {"value": "0", "why": "Same UI access everywhere"},
+    "osPasswordEnable": {"value": "0", "why": "Same OS access everywhere"},
+    "uiLevel": {"value": "3", "why": "Same UI options everywhere"}
+  },
+  "compare": ["Service_rsync", "Service_smbd_nmbd", "Service_vsftpd", "bootDelay", "blankBetweenSequences",
+              "MultiSyncCopySequences", "MultiSyncMulticast", "MultiSyncUnicast", "MultiSyncBroadcast",
+              "MultiSyncRefreshStatus", "AutoEnableOutputs", "alwaysTransmit", "MediaBackend",
+              "LogLevel_General", "ScheduleSeconds", "DisableScheduler", "verbosePlaylistItemDetails"],
+  "per_unit": ["HostName", "HostDescription", "fppMode", "AudioOutput", "AudioMixerDevice", "ForceAudioId",
+               "VideoOutput", "InstalledCape", "LEDDisplayType", "piRTC", "EnableTethering", "TetherSSID",
+               "ClockDate", "ClockTime", "FPP_UUID", "MultiSyncExtraRemotes", "MultiSyncRemotes",
+               "storageDevice", "volume", "AudioCardType", "AudioCard0Type", "UnpartitionedSpace", "LastBlock"],
+  "secret_pattern": "pass|psk|secret|token|key|MQTTUsername|MQTTHost|email"
+}

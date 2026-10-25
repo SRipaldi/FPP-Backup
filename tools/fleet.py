@@ -7,6 +7,7 @@ chrony.conf and restarts chrony), and only on the hosts named.
 
 Usage:
   tools/fleet.py audit [--master 172.1.2.10] [--json]
+  tools/fleet.py drift [--json]               # every unit vs fleet-policy.json
   tools/fleet.py set ntpServer master --hosts FPP-Side,FPP-Roof
   tools/fleet.py set Latitude <latitude> --hosts all
   tools/fleet.py restart --hosts all          # fppd only; skips units that are playing
@@ -22,6 +23,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 DEFAULT_MASTER = "172.1.2.10"
 # fppd status prints local time with a zone abbreviation; enough of them to
@@ -118,6 +120,32 @@ def audit_unit(u):
     return row
 
 
+def scan_unit(u, workers=6):
+    """Every user setting on a unit (schema entries with a "type"), plus its default."""
+    if not u["online"]:
+        return {}
+    schema = fetch_json(f"{u['base']}/api/settings", timeout=20).get("settings", {})
+    names = [k for k, v in schema.items() if "type" in v]
+
+    def one(k):
+        try:
+            return k, fetch_json(f"{u['base']}/api/settings/{urllib.parse.quote(k)}", timeout=10).get("value")
+        except Exception:
+            return k, None
+
+    with concurrent.futures.ThreadPoolExecutor(workers) as ex:
+        values = dict(ex.map(one, names))
+    def default_of(e):
+        # A select with no "default" marks one option's label "(Default)".
+        if e.get("default") is None and e.get("type") == "select" and isinstance(e.get("options"), dict):
+            return next((v for label, v in e["options"].items() if "(Default)" in str(label)), None)
+        return e.get("default")
+
+    return {k: {"value": values.get(k), "default": default_of(schema[k]), "type": schema[k].get("type"),
+                "description": schema[k].get("description"),
+                "restart": schema[k].get("restart"), "reboot": schema[k].get("reboot")} for k in names}
+
+
 def ntp_for(u, units, master):
     """The player's address on the same /24 as this unit, else its main address."""
     m = next((x for x in units if x["is_master"]), None)
@@ -125,6 +153,138 @@ def ntp_for(u, units, master):
         return master
     net = u["ip"].rsplit(".", 1)[0]
     return next((a for a in m["addresses"] if a.rsplit(".", 1)[0] == net), master)
+
+
+POLICY = Path(__file__).resolve().parent.parent / "fleet-policy.json"
+
+
+def effective(entry):
+    """A setting's value, or its schema default when unset, as a string."""
+    if entry is None:
+        return None
+    v = entry["value"] if entry["value"] is not None else entry.get("default")
+    if v is None and entry.get("type") == "checkbox":
+        return "0"  # never saved: the checkbox is off
+    return "" if v is None else str(v)
+
+
+def drift_report(master, policy_path=POLICY):
+    """Scan every unit and compare it with the policy. Read-only.
+
+    Returns units (identity, health), 'match' rows (expected value per unit,
+    status ok/equivalent/drift/n-a), 'compare' rows and any other setting that
+    differs within a role. Secret settings are never included."""
+    policy = json.loads(Path(policy_path).read_text())
+    secret = re.compile(policy["secret_pattern"], re.I)
+    units = discover(master)
+    online = [u for u in units if u["online"]]
+    with concurrent.futures.ThreadPoolExecutor(5) as ex:
+        scans = dict(zip([u["host"] for u in online], ex.map(scan_unit, online)))
+        audits = dict(zip([u["host"] for u in online], ex.map(audit_unit, online)))
+    for u in online:
+        try:
+            info = fetch_json(f"{u['base']}/api/system/info")
+            util = info.get("Utilization", {})
+            u.update(os_version=info.get("OSVersion"), uptime=util.get("Uptime"),
+                     disk_free=(util.get("Disk", {}).get("Media", {}) or {}).get("Free"),
+                     disk_total=(util.get("Disk", {}).get("Media", {}) or {}).get("Total"))
+        except Exception:
+            pass
+        a = audits[u["host"]]
+        u.update(clock=a.get("clock"), offset_s=a.get("offset_s"), status=a.get("status"),
+                 role="player" if u["is_master"] else "remote")
+        u.pop("base", None)
+    for u in units:
+        if not u["online"]:
+            u["role"] = "remote"
+        u["version_ok"] = u.get("version") == policy.get("fpp_version") if u["online"] else None
+
+    def major(u):
+        try:
+            return int(str(u.get("version", "0")).split(".")[0])
+        except ValueError:
+            return 0
+
+    match_rows = []
+    for name, rule in policy["match"].items():
+        cells = {}
+        for u in online:
+            entry = scans[u["host"]].get(name)
+            if rule.get("min_version") and major(u) < rule["min_version"]:
+                cells[u["host"]] = {"value": None, "expected": None, "status": "n/a"}
+                continue
+            expected = rule["value"]
+            if expected == "@master":
+                expected = rule.get("master_value", "") if u["is_master"] else ntp_for(u, units, master)
+            elif u["is_master"] and "master_value" in rule:
+                expected = rule["master_value"]
+            got = effective(entry)
+            if entry is None:
+                status = "n/a"
+            elif got == expected:
+                status = "ok"
+            elif got in rule.get("equivalent", []):
+                status = "equivalent"
+            else:
+                status = "drift"
+            cells[u["host"]] = {"value": got, "expected": expected, "status": status}
+        meta = next((scans[h][name] for h in scans if name in scans[h]), {})
+        match_rows.append({"name": name, "why": rule.get("why", ""), "expected": rule["value"],
+                           "description": meta.get("description", ""),
+                           "needs": "reboot" if meta.get("reboot") else "restart" if meta.get("restart") else None,
+                           "cells": cells, "drift": sum(c["status"] == "drift" for c in cells.values())})
+
+    def role_rows(names, kind):
+        rows = []
+        for name in names:
+            if secret.search(name):
+                continue
+            cells = {u["host"]: effective(scans[u["host"]].get(name)) for u in online}
+            remotes = {v for u in online if not u["is_master"] for v in [cells[u["host"]]] if v is not None}
+            if kind == "other" and len(set(v for v in cells.values() if v is not None)) < 2:
+                continue
+            desc = next((scans[h][name].get("description") for h in scans if name in scans[h]), "")
+            rows.append({"name": name, "description": desc, "cells": cells,
+                         "remotes_differ": len(remotes) > 1})
+        return rows
+
+    known = set(policy["match"]) | set(policy["compare"]) | set(policy["per_unit"])
+    all_names = sorted(set().union(*[s.keys() for s in scans.values()])) if scans else []
+    return {
+        "master": master, "policy": {k: policy[k] for k in ("fpp_version",)},
+        "scanned": time.time(), "units": units,
+        "match": match_rows,
+        "compare": role_rows(policy["compare"], "compare"),
+        "other": role_rows([n for n in all_names if n not in known], "other"),
+        "per_unit": role_rows([n for n in policy["per_unit"] if any(n in s for s in scans.values())], "per_unit"),
+    }
+
+
+def cmd_drift(args):
+    rep = drift_report(args.master)
+    if args.json:
+        print(json.dumps(rep, indent=2))
+        return
+    hosts = [u["host"] for u in rep["units"] if u["online"]]
+    print("Settings that should match (policy):")
+    for r in rep["match"]:
+        bad = [f"{h}={c['value']!r}" for h, c in r["cells"].items() if c["status"] == "drift"]
+        print(f"  {'DRIFT' if bad else 'ok   '} {r['name']:18} expected {r['expected']!r}"
+              + (f": {', '.join(bad)}" if bad else ""))
+    vers = [f"{u['host']}={u.get('version')}" for u in rep["units"] if u["online"] and not u["version_ok"]]
+    print(f"  {'DRIFT' if vers else 'ok   '} {'FPP version':18} expected {rep['policy']['fpp_version']!r}"
+          + (f": {', '.join(vers)}" if vers else ""))
+    print("\nRemotes that disagree:")
+    for r in rep["compare"] + rep["other"]:
+        if r["remotes_differ"]:
+            vals = {}
+            for h in hosts:
+                if h != next((u["host"] for u in rep["units"] if u.get("is_master")), None):
+                    vals.setdefault(r["cells"].get(h), []).append(h)
+            print(f"  {r['name']:26} " + "; ".join(f"{v!r}: {', '.join(hs)}" for v, hs in vals.items()))
+    off = [u["host"] for u in rep["units"] if not u["online"]]
+    if off:
+        print(f"\nOffline: {', '.join(off)}")
 
 
 def cmd_audit(args):
@@ -213,6 +373,8 @@ def main():
     sub = ap.add_subparsers(dest="cmd", required=True)
     a = sub.add_parser("audit")
     a.add_argument("--json", action="store_true")
+    dr = sub.add_parser("drift", help="compare every unit with fleet-policy.json (read-only)")
+    dr.add_argument("--json", action="store_true")
     s = sub.add_parser("set")
     s.add_argument("name")
     s.add_argument("value", help='value, or "master" for the player address on each unit\'s subnet')
@@ -223,7 +385,8 @@ def main():
         r.add_argument("--hosts", required=True, help='comma-separated hostnames, or "all"')
         r.add_argument("--force", action="store_true", help="also units that are playing")
     args = ap.parse_args()
-    {"audit": cmd_audit, "set": cmd_set, "restart": cmd_restart, "reboot": cmd_restart}[args.cmd](args)
+    {"audit": cmd_audit, "drift": cmd_drift, "set": cmd_set, "restart": cmd_restart,
+     "reboot": cmd_restart}[args.cmd](args)
 
 
 if __name__ == "__main__":

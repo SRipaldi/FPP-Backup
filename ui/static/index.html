@@ -13,6 +13,7 @@
   <span id="player" class="muted">connecting…</span>
   <nav>
     <button data-tab="controllers" class="active">Controllers</button>
+    <button data-tab="fleet">Fleet <span id="fleet-badge" class="badge warn-badge" hidden></span></button>
     <button data-tab="build">Build card</button>
     <button data-tab="flash">Flash card</button>
     <button data-tab="jobs">Jobs <span id="jobs-badge" class="badge" hidden></span></button>
@@ -31,6 +32,31 @@
         <tbody id="controllers"><tr><td colspan="6" class="muted">Loading from the player…</td></tr></tbody>
       </table>
     </div>
+  </section>
+
+  <section id="tab-fleet" hidden>
+    <div class="bar">
+      <p class="muted" id="fleet-when">Compares every controller with <code>fleet-policy.json</code>. Scanning reads only.</p>
+      <button id="fleet-refresh">Rescan</button>
+    </div>
+    <div id="fleet-summary" class="chips"></div>
+
+    <h2 class="section">Controllers</h2>
+    <div class="table-wrap"><table id="fleet-units"></table></div>
+
+    <h2 class="section">Settings that should match <span class="muted small">policy</span></h2>
+    <p class="muted small">Red cells differ from the expected value. <strong>Apply</strong> writes the expected value to those units only. Click a red value to make it the expected one instead (edits the policy, not the controllers).</p>
+    <div class="table-wrap"><table id="fleet-match" class="grid"></table></div>
+    <div id="fleet-restart-note" class="note-box" hidden></div>
+
+    <h2 class="section">Remotes that disagree <span class="muted small">no expected value yet</span></h2>
+    <p class="muted small">Settings where the remote controllers are not all the same. Pick the value they should all have to add it to the policy.</p>
+    <div class="table-wrap"><table id="fleet-compare" class="grid"></table></div>
+
+    <details class="section">
+      <summary>Different by design <span class="muted small">identity and hardware, never flagged</span></summary>
+      <div class="table-wrap"><table id="fleet-perunit" class="grid"></table></div>
+    </details>
   </section>
 
   <section id="tab-build" hidden>

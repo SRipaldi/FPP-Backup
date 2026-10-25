@@ -70,3 +70,28 @@ pre#log { background: var(--code-bg); color: var(--code-text); border-radius: 6p
 .progress { font: 12px ui-monospace, Menlo, monospace; color: var(--accent); min-height: 1.5em; padding-top: 6px; }
 #toast { position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%); background: var(--text); color: var(--bg);
   padding: 8px 14px; border-radius: 6px; max-width: calc(100vw - 32px); }
+/* fleet */
+h2.section { margin: 22px 0 6px; }
+details.section { margin-top: 22px; }
+details.section summary { cursor: pointer; font-weight: 600; }
+.small { font-size: 12px; font-weight: normal; }
+code { font: 12px ui-monospace, Menlo, monospace; }
+.chips { display: flex; flex-wrap: wrap; gap: 8px; margin: 6px 0 4px; }
+.chip { background: var(--panel); border: 1px solid var(--line); border-radius: 16px; padding: 4px 12px; }
+.chip strong { font-size: 15px; margin-right: 4px; }
+.chip.bad { border-color: var(--danger); color: var(--danger); }
+.chip.ok { border-color: var(--ok); color: var(--ok); }
+.warn-badge { background: var(--danger); color: #fff; }
+table.grid th.unit { writing-mode: vertical-rl; transform: rotate(180deg); white-space: nowrap; text-transform: none;
+  letter-spacing: 0; font-size: 12px; padding: 8px 4px; vertical-align: bottom; }
+table.grid td { white-space: nowrap; font-size: 13px; }
+table.grid td.cell { text-align: center; }
+td.cell.ok { color: var(--muted); }
+td.cell.equivalent { color: var(--warn); }
+td.cell.drift { color: var(--danger); font-weight: 600; cursor: pointer; text-decoration: underline dotted; }
+td.cell.na { color: var(--line); }
+td.cell.odd { color: var(--warn); font-weight: 600; }
+td .why { display: block; color: var(--muted); font-size: 12px; white-space: normal; max-width: 260px; }
+.note-box { margin-top: 10px; padding: 10px 12px; border: 1px solid var(--warn); border-radius: 8px; background: var(--panel); }
+.dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; background: var(--muted); }
+.dot.on { background: var(--ok); } .dot.off { background: var(--danger); } .dot.play { background: var(--accent); }
