@@ -44,7 +44,7 @@ function showTab(name) {
   ({ build: loadBuild, flash: loadFlash, jobs: loadJobs, fleet: () => FLEET ? renderFleet() : loadFleet(false),
      dashboard: () => DASH ? renderDashboard() : loadDashboard(false),
      sequences: () => FLEET ? renderSequences() : loadFleet(false).then(renderSequences),
-     show: startLive }[name] || (() => {}))();
+     show: startLive, settings: loadSettings }[name] || (() => {}))();
   if (name !== "show") stopLive();
 }
 document.querySelectorAll("nav button").forEach((b) => (b.onclick = () => showTab(b.dataset.tab)));
@@ -467,6 +467,60 @@ async function pollLive() {
     }).join("") + "</tbody>";
 }
 
+// ------------------------------------------------------------ settings
+let SETTINGS = null;
+
+async function loadSettings() {
+  try { SETTINGS = await api("/api/settings"); } catch (e) { toast(e.message); return; }
+  const st = SETTINGS.settings;
+  $("#set-player").value = st.player || "";
+  $("#set-monitor").checked = st.monitor;
+  $("#set-interval").value = st.monitor_interval;
+  $("#set-updates").checked = st.update_check;
+  $("#set-backup-days").value = st.backup_max_age_days;
+  $("#set-cli").hidden = !SETTINGS.from_cli;
+  $("#settings-first").hidden = !!SETTINGS.active_player;
+  $("#settings-badge").hidden = !!SETTINGS.active_player;
+  $("#set-inv").innerHTML = !SETTINGS.inventory ? '<span class="warn">No inventory yet.</span>'
+    : `${SETTINGS.inventory_count} controller${SETTINGS.inventory_count === 1 ? "" : "s"} in <code>${esc(SETTINGS.files.inventory)}</code>.`;
+  $("#set-inv-build").disabled = !SETTINGS.active_player;
+  $("#set-files").innerHTML = `Saved in <code>${esc(SETTINGS.files.settings)}</code> (this computer only; not in Git).`;
+  $("#set-test-result").textContent = SETTINGS.active_player ? `Active player: ${SETTINGS.active_player}` : "";
+}
+
+$("#set-test").onclick = async () => {
+  const out = $("#set-test-result");
+  out.textContent = "Testing…";
+  try {
+    const r = await api("/api/settings/test", { player: $("#set-player").value.trim() });
+    out.innerHTML = `<span class="good">Found ${esc(r.host)}</span>, FPP ${esc(r.version)} on ${esc(r.platform)}, mode <strong>${esc(r.mode)}</strong>. ` +
+      (r.controllers.length ? `It knows ${r.controllers.length} other controller${r.controllers.length === 1 ? "" : "s"}: ${r.controllers.map(esc).join(", ")}.` : "It doesn't list any other controllers (is MultiSync on?).") +
+      (r.mode !== "player" ? ' <span class="warn">This unit is not in player mode; use the controller that runs the show.</span>' : "");
+  } catch (e) { out.innerHTML = `<span class="bad">${esc(e.message)}</span>`; }
+};
+
+$("#set-save").onclick = async () => {
+  const body = { player: $("#set-player").value.trim(), monitor: $("#set-monitor").checked,
+                 monitor_interval: +$("#set-interval").value, update_check: $("#set-updates").checked,
+                 backup_max_age_days: +$("#set-backup-days").value };
+  const changedPlayer = SETTINGS && body.player !== (SETTINGS.settings.player || "");
+  try {
+    SETTINGS = await api("/api/settings", body);
+    toast("Settings saved.");
+    if (changedPlayer) { DASH = null; FLEET = null; CONTROLLERS = []; loadControllers(); }
+    loadSettings();
+  } catch (e) { toast(e.message); }
+};
+
+$("#set-inv-build").onclick = async () => {
+  if (!confirm(`Replace the controller inventory with every controller ${SETTINGS.active_player} can reach right now?`)) return;
+  try {
+    await api("/api/inventory/rebuild", {});
+    toast("Inventory rebuilt.");
+    DASH = null; loadSettings();
+  } catch (e) { toast(e.message); }
+};
+
 // ------------------------------------------------------------ notifications
 async function loadNotes() {
   try {
@@ -827,7 +881,17 @@ $("#pol-discard").onclick = async () => {
 };
 
 setInterval(() => { if (!$("#tab-jobs").hidden || !$("#jobs-badge").hidden) loadJobs(); }, 3000);
-loadControllers();
-const startTab = location.hash.slice(1);
-showTab(startTab && document.getElementById("tab-" + startTab) ? startTab : "dashboard");
+(async () => {
+  let S = null;
+  try { S = await api("/api/settings"); } catch {}
+  if (S && !S.active_player) {   // first run: nothing works until the player is set
+    $("#player").textContent = "no player set";
+    $("#settings-badge").hidden = false;
+    showTab("settings");
+    return;
+  }
+  loadControllers();
+  const startTab = location.hash.slice(1);
+  showTab(startTab && document.getElementById("tab-" + startTab) ? startTab : "dashboard");
+})();
 loadJobs();

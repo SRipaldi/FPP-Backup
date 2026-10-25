@@ -16,12 +16,16 @@ See [FPP-Backup-handoff.md](FPP-Backup-handoff.md) for the original decisions an
 python3 ui/server.py
 ```
 
-Opens `http://127.0.0.1:8765/`. Start it from Terminal or VS Code so the macOS admin dialog can appear when flashing. Options: `--master <player ip>` (default `172.1.2.10`), `--port`, `--no-browser`.
+Opens `http://127.0.0.1:8765/`. Start it from Terminal or VS Code so the macOS admin dialog can appear when flashing. Options: `--port`, `--no-browser`, `--no-monitor`, and `--master <player-ip>` to override the saved player for one run.
 
-- **Controllers**: every unit the player knows about, live; snapshot one (config, or config + media).
-- **Build card**: pick a snapshot and an FPP release; download the stock image if needed; build.
-- **Flash card**: pick a built image and a detected SD card, type the disk id, flash and verify.
-- **Jobs**: live output of every action.
+**First run:** the app opens on **Settings**. Enter the address of your FPP *player* (the controller that runs the show; every other controller is reached through its `/proxy/` and found through MultiSync), press **Test connection**, save, then **Build inventory from the player**. Settings are saved in `config/settings.json`, which is per computer and not in Git.
+
+- **Dashboard**: controllers online vs expected, policy drift, versions and available updates, backups due, sequence coverage, the show, and what needs attention.
+- **Backup > Controllers**: back up the selected controllers (configuration, optionally media).
+- **Fleet Management > Fleet**: compare every controller with `fleet-policy.json`, edit the policy, update drifting settings. **Sequences**: every sequence the schedule plays must be on every controller.
+- **Show > Live**: during a show, whether each remote plays the same sequence at the same point and receives the player's sync.
+- **Image Management**: build a card image from a backup, flash and verify an SD card.
+- **Notifications** (bell): controllers going offline, dark remotes during a show, failed jobs, drift, missing sequences, new releases.
 
 ## Command line
 
@@ -29,6 +33,7 @@ The UI runs exactly these:
 
 ```
 tools/snapshot.py [--media] --via <player-ip> <unit-ip>      # or: tools/snapshot.py http://<unit-ip>
+tools/fleet.py audit | drift | set | restart                  # player from config/settings.json, or --master
 tools/get_image.py 10.3 --platform "BeagleBone Black"         # stock image into work/images/
 tools/stage_card.py snapshots/<host>/<ts> work/stage/<host>
 tools/build_image.sh work/images/<stock>.img work/stage/<host> work/out/<host>-<ver>.img

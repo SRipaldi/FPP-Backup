@@ -50,6 +50,7 @@
     </details>
     <div class="nav-bottom">
       <button data-tab="jobs">Jobs <span id="jobs-badge" class="badge" hidden></span></button>
+      <button data-tab="settings">Settings <span id="settings-badge" class="badge warn-badge" hidden>!</span></button>
     </div>
   </nav>
 </aside>
@@ -239,6 +240,44 @@
         </div>
       </li>
     </ol>
+  </section>
+
+  <section id="tab-settings" hidden>
+    <h2 class="page-title">Settings</h2>
+    <div id="settings-first" class="note-box" hidden>
+      <strong>Welcome.</strong> Enter the address of your FPP <em>player</em>: the controller that runs the show and knows the others (MultiSync). Everything else is found through it. Test it, save, then build the controller inventory below.
+    </div>
+    <ol class="steps">
+      <li>
+        <h2>Player <span class="muted small">source of truth</span></h2>
+        <p class="muted small">This app reaches every controller through the player (its <code>/proxy/</code>), and asks it which controllers exist (MultiSync). Use an address this computer can reach.</p>
+        <div class="row">
+          <input id="set-player" placeholder="e.g. 192.168.1.10 or fpp.local" autocomplete="off" spellcheck="false">
+          <button id="set-test">Test connection</button>
+        </div>
+        <p id="set-test-result" class="note"></p>
+        <p id="set-cli" class="warn small" hidden>This server was started with <code>--master</code>, which overrides the saved player until it is restarted without it.</p>
+      </li>
+      <li>
+        <h2>Controller inventory <span class="muted small">which controllers should exist</span></h2>
+        <p class="muted small">A controller in the inventory that doesn't answer is reported <strong>offline</strong>; one that answers but isn't listed is <strong>unknown</strong>. Build it from what the player can reach now, then add or remove units from the Dashboard as things change.</p>
+        <p id="set-inv" class="note"></p>
+        <button id="set-inv-build">Build inventory from the player</button>
+      </li>
+      <li>
+        <h2>Monitoring and checks</h2>
+        <div class="settings-grid">
+          <label class="inline"><input type="checkbox" id="set-monitor"> Watch controllers in the background while this app runs</label>
+          <label>Check every <input type="number" id="set-interval" min="30" max="3600" class="narrow-num"> seconds</label>
+          <label class="inline"><input type="checkbox" id="set-updates"> Check GitHub for new FPP releases and patches</label>
+          <label>Remind me to back up after <input type="number" id="set-backup-days" min="1" max="365" class="narrow-num"> days</label>
+        </div>
+      </li>
+    </ol>
+    <div class="bar policy-buttons">
+      <span id="set-files" class="muted small"></span>
+      <button id="set-save" class="primary">Save settings</button>
+    </div>
   </section>
 
   <section id="tab-jobs" hidden>

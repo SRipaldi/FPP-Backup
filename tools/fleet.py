@@ -6,7 +6,7 @@ PUT /api/settings/<name>, which also applies it (e.g. ntpServer rewrites
 chrony.conf and restarts chrony), and only on the hosts named.
 
 Usage:
-  tools/fleet.py audit [--master 172.1.2.10] [--json]
+  tools/fleet.py audit [--master <player-ip>] [--json]   # player defaults to config/settings.json
   tools/fleet.py drift [--json]               # every unit vs fleet-policy.json
   tools/fleet.py set ntpServer master --hosts FPP-Side,FPP-Roof
   tools/fleet.py set Latitude <latitude> --hosts all
@@ -25,7 +25,48 @@ import urllib.request
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-DEFAULT_MASTER = "172.1.2.10"
+ROOT = Path(__file__).resolve().parent.parent
+# Per-installation settings (gitignored): which player is the source of truth,
+# and app behaviour. Edited from the UI's Settings page.
+SETTINGS = ROOT / "config/settings.json"
+SETTINGS_DEFAULTS = {"player": "", "monitor": True, "monitor_interval": 60,
+                     "update_check": True, "backup_max_age_days": 7}
+
+
+def load_settings(path=SETTINGS):
+    try:
+        saved = json.loads(Path(path).read_text())
+    except (FileNotFoundError, ValueError):
+        saved = {}
+    return {**SETTINGS_DEFAULTS, **{k: v for k, v in saved.items() if k in SETTINGS_DEFAULTS}}
+
+
+def validate_settings(d):
+    """Check and normalise settings from the UI. Raises ValueError."""
+    out = dict(SETTINGS_DEFAULTS)
+    player = str(d.get("player", "")).strip()
+    if player and not re.match(r"^[A-Za-z0-9][A-Za-z0-9.\-]{0,252}$", player):
+        raise ValueError("player must be an IP address or hostname")
+    out["player"] = player
+    out["monitor"] = bool(d.get("monitor", True))
+    out["update_check"] = bool(d.get("update_check", True))
+    try:
+        out["monitor_interval"] = int(d.get("monitor_interval", 60))
+        out["backup_max_age_days"] = int(d.get("backup_max_age_days", 7))
+    except (TypeError, ValueError):
+        raise ValueError("intervals must be whole numbers")
+    if not 30 <= out["monitor_interval"] <= 3600:
+        raise ValueError("monitor interval must be 30 to 3600 seconds")
+    if not 1 <= out["backup_max_age_days"] <= 365:
+        raise ValueError("backup reminder must be 1 to 365 days")
+    return out
+
+
+def save_settings(d, path=SETTINGS):
+    d = validate_settings(d)
+    Path(path).parent.mkdir(parents=True, exist_ok=True)
+    Path(path).write_text(json.dumps(d, indent=2) + "\n")
+    return d
 # fppd status prints local time with a zone abbreviation; enough of them to
 # compute a clock offset for the zones a show is likely to use.
 TZ_ABBR = {"UTC": 0, "GMT": 0, "PST": -8, "PDT": -7, "MST": -7, "MDT": -6,
@@ -52,7 +93,7 @@ def fetch_json(url, timeout=6, tries=3):
             time.sleep(1)
 
 
-INVENTORY = Path(__file__).resolve().parent.parent / "fleet-inventory.json"
+INVENTORY = ROOT / "fleet-inventory.json"
 
 
 def load_inventory(path=INVENTORY):
@@ -196,7 +237,7 @@ def ntp_for(u, units, master):
     return next((a for a in m["addresses"] if a.rsplit(".", 1)[0] == net), master)
 
 
-POLICY = Path(__file__).resolve().parent.parent / "fleet-policy.json"
+POLICY = ROOT / "fleet-policy.json"
 
 
 def effective(entry):
@@ -259,7 +300,7 @@ def validate_policy(policy):
         if rule.get("why"):
             r["why"] = text(rule["why"], f"{name} note")
         match[name] = r
-    out = {"_comment": policy.get("_comment", ""), "master": text(policy.get("master", DEFAULT_MASTER), "master"),
+    out = {"_comment": policy.get("_comment", ""),
            "fpp_version": text(policy.get("fpp_version", ""), "fpp_version"), "match": match,
            "backup_max_age_days": int(policy.get("backup_max_age_days", 7)),
            "coverage_exclude": names(policy.get("coverage_exclude", []), "coverage_exclude"),
@@ -269,7 +310,7 @@ def validate_policy(policy):
     return out
 
 
-def scan_fleet(master):
+def scan_fleet(master, check_updates=True):
     """Everything drift evaluation needs, from the controllers. Read-only, ~20 s."""
     inventory = load_inventory()
     units = discover(master, inventory)
@@ -295,7 +336,7 @@ def scan_fleet(master):
     for u in units:
         u["role"] = "player" if u.get("is_master") else "remote"
     try:
-        updates = update_status(units)
+        updates = update_status(units) if check_updates else {}
     except Exception as e:  # GitHub unreachable: report, don't fail the scan
         updates = {"error": str(e)}
     for u in units:
@@ -384,7 +425,7 @@ def sequence_coverage(master, units, exclude=(), playlists=None):
 # ---------------------------------------------------------------- updates
 
 GITHUB = "https://api.github.com/repos/FalconChristmas/fpp"
-UPDATE_CACHE = Path(__file__).resolve().parent.parent / "work/cache/fpp-github.json"
+UPDATE_CACHE = ROOT / "work/cache/fpp-github.json"
 UPDATE_TTL = 3600
 
 
@@ -655,7 +696,8 @@ def cmd_restart(args):
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--master", default=DEFAULT_MASTER)
+    ap.add_argument("--master", default=load_settings()["player"] or None,
+                    help="the player's address (default: config/settings.json)")
     sub = ap.add_subparsers(dest="cmd", required=True)
     a = sub.add_parser("audit")
     a.add_argument("--json", action="store_true")
@@ -671,6 +713,8 @@ def main():
         r.add_argument("--hosts", required=True, help='comma-separated hostnames, or "all"')
         r.add_argument("--force", action="store_true", help="also units that are playing")
     args = ap.parse_args()
+    if not args.master:
+        sys.exit("no player configured: pass --master <ip> or set it on the UI's Settings page")
     {"audit": cmd_audit, "drift": cmd_drift, "set": cmd_set, "restart": cmd_restart,
      "reboot": cmd_restart}[args.cmd](args)
 

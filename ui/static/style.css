@@ -204,3 +204,8 @@ ul.attention li .go { white-space: nowrap; }
 .live-player { margin: 10px 0 14px; display: flex; gap: 24px; flex-wrap: wrap; align-items: baseline; }
 .live-player .big { font-size: 18px; font-weight: 650; }
 .live-dot[hidden], .bell-count[hidden] { display: none; }
+/* settings */
+.settings-grid { display: grid; gap: 10px; }
+.settings-grid label { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+input.narrow-num { width: 90px; min-width: 0; }
+#set-player { min-width: 260px; }

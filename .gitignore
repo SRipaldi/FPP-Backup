@@ -12,3 +12,6 @@ snapshots/
 
 # Downloaded images and build outputs
 work/
+
+# Per-installation settings (player address etc.), edited on the Settings page
+config/settings.json

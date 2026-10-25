@@ -12,7 +12,8 @@ browser cannot trigger actions (CSRF / DNS rebinding).
 Start it from Terminal or VS Code (not a background service): flashing shows
 the macOS admin dialog, which needs your login session.
 
-Usage: python3 ui/server.py [--master 172.1.2.10] [--port 8765] [--no-browser]
+Usage: python3 ui/server.py [--master <player-ip>] [--port 8765] [--no-browser]
+The player defaults to the one saved on the Settings page (config/settings.json).
 """
 import argparse
 import concurrent.futures
@@ -42,7 +43,13 @@ import fleet  # noqa: E402
 import get_image  # noqa: E402
 
 TOKEN = secrets.token_urlsafe(24)
-CONFIG = {"master": "172.1.2.10"}
+CONFIG = {"master": None, "from_cli": False}  # the player; from config/settings.json unless --master
+
+
+def need_player():
+    if not CONFIG["master"]:
+        raise ValueError("No player configured yet: open Settings and enter your FPP player's address.")
+    return CONFIG["master"]
 
 
 # ---------------------------------------------------------------- jobs
@@ -206,7 +213,7 @@ def snapshots():
 
 
 def controllers():
-    found = fleet.discover(CONFIG["master"], fleet.load_inventory())
+    found = fleet.discover(need_player(), fleet.load_inventory())
     snaps = snapshots()
 
     def status(c):  # playing / idle, for the status dot
@@ -357,10 +364,11 @@ def fleet_report(refresh=False):
     with _fleet["lock"]:
         rescanned = refresh or _fleet["scan"] is None or time.time() - _fleet["t"] > 300
         if rescanned:
-            _fleet["scan"] = fleet.scan_fleet(CONFIG["master"])
+            _fleet["scan"] = fleet.scan_fleet(need_player(), check_updates=fleet.load_settings()["update_check"])
             _fleet["t"] = time.time()
         prev = _fleet["data"]
         _fleet["data"] = fleet.evaluate(_fleet["scan"], load_policy())
+        _fleet["data"]["policy"]["backup_max_age_days"] = fleet.load_settings()["backup_max_age_days"]
         if rescanned:
             scan_notices(prev, _fleet["data"])
         return _fleet["data"]
@@ -395,7 +403,7 @@ def live_status():
     from the player, for the live show view and the monitor. Read-only."""
     scan = _fleet["scan"]
     units = [u for u in (scan["units"] if scan else fleet.discover(CONFIG["master"], fleet.load_inventory())) if u.get("online")]
-    master = CONFIG["master"]
+    master = need_player()
     player = next((u for u in units if u.get("is_master")), None)
     player_addrs = set((player or {}).get("addresses", [])) | {master}
 
@@ -436,10 +444,16 @@ def live_status():
     return {"t": now, "units": rows, "player": next((r for r in rows if r["role"] == "player"), None)}
 
 
-def monitor_loop(interval=60):
+def monitor_loop():
     """Background watch while the UI server runs: offline/online changes, show
-    start/stop, and remotes that are dark while the show plays."""
+    start/stop, and remotes that are dark while the show plays. Follows the
+    Settings page (on/off, interval) and does nothing until a player is set."""
     while True:
+        st = fleet.load_settings()
+        interval = st["monitor_interval"]
+        if not st["monitor"] or not CONFIG["master"]:
+            time.sleep(30)
+            continue
         try:
             if _fleet["lock"].locked():  # a full scan is loading the proxy; check next time
                 time.sleep(interval)
@@ -626,6 +640,60 @@ def act_inventory(body):
     return fleet_report()
 
 
+def act_settings_save(body):
+    """Save the Settings page. A new player resets every cache and the monitor."""
+    if CONFIG["from_cli"] and body.get("player") and body["player"] != CONFIG["master"]:
+        raise ValueError("This server was started with --master; restart it without that to change the player here.")
+    old = CONFIG["master"]
+    st = fleet.save_settings(body)
+    if not CONFIG["from_cli"]:
+        CONFIG["master"] = st["player"] or None
+    if CONFIG["master"] != old:
+        with _fleet["lock"]:
+            _fleet.update(scan=None, data=None, t=0)
+        _mon.update(online=None, misses={}, show=None, last=None)
+    return settings_view()
+
+
+def settings_view():
+    inv = fleet.load_inventory()
+    return {"settings": fleet.load_settings(), "active_player": CONFIG["master"], "from_cli": CONFIG["from_cli"],
+            "inventory_count": len((inv or {}).get("controllers", [])), "inventory": inv is not None,
+            "files": {"settings": str(fleet.SETTINGS.relative_to(ROOT)), "inventory": str(fleet.INVENTORY.relative_to(ROOT)),
+                      "policy": str(fleet.POLICY.relative_to(ROOT))}}
+
+
+def act_settings_test(body):
+    """Check that an address is an FPP player and how many controllers it knows. Read-only."""
+    addr = str(body.get("player", "")).strip()
+    fleet.validate_settings({"player": addr})
+    if not addr:
+        raise ValueError("enter an address first")
+    try:
+        info = fleet.fetch_json(f"http://{addr}/api/system/info", timeout=6, tries=1)
+    except Exception as e:
+        raise ValueError(f"No FPP answered at {addr} ({str(e)[:60]})")
+    try:
+        systems = fleet.fetch_json(f"http://{addr}/api/fppd/multiSyncSystems", timeout=8, tries=1).get("systems", [])
+        known = sorted({x.get("hostname") for x in systems if re.match(r"^\d+\.\d+\.\d+\.\d+$", x.get("address", ""))} - {info.get("HostName")})
+    except Exception:
+        known = []
+    return {"host": info.get("HostName"), "version": info.get("Version"), "platform": info.get("Platform"),
+            "mode": info.get("Mode"), "controllers": known}
+
+
+def act_inventory_rebuild(body):
+    """Replace fleet-inventory.json with every controller the player can reach now."""
+    units = [u for u in fleet.discover(need_player()) if u["online"]]
+    if not units:
+        raise ValueError("no controllers answered")
+    fleet.save_inventory({"controllers": [{"host": u["host"], "ip": u["ip"],
+                                           "role": "player" if u["is_master"] else "remote"} for u in units]})
+    with _fleet["lock"]:
+        _fleet.update(scan=None, data=None, t=0)
+    return settings_view()
+
+
 def act_fleet_restart(body):
     hosts = [h for h in body.get("hosts", []) if re.match(r"^[\w\-]+$", h)]
     if not hosts:
@@ -638,7 +706,8 @@ def act_fleet_restart(body):
 ACTIONS = {"snapshot": act_snapshot, "backup": act_backup, "download": act_download, "build": act_build, "flash": act_flash,
            "fleet/apply": act_fleet_apply, "fleet/expect": act_fleet_expect, "fleet/restart": act_fleet_restart,
            "fleet/preview": act_fleet_preview, "fleet/policy": act_fleet_policy_save,
-           "inventory": act_inventory,
+           "inventory": act_inventory, "inventory/rebuild": act_inventory_rebuild,
+           "settings": act_settings_save, "settings/test": act_settings_test,
            "notifications/read": lambda b: notes_mark(b.get("ids")) or {"ok": True},
            "notifications/clear": lambda b: notes_mark(clear=True) or {"ok": True}}
 
@@ -688,6 +757,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send(200, cards())
             if path == "/api/fleet":
                 return self.send(200, fleet_report(refresh="refresh=1" in self.path))
+            if path == "/api/settings":
+                return self.send(200, settings_view())
             if path == "/api/notifications":
                 items = sorted(_notes["items"], key=lambda n: -n["t"])
                 return self.send(200, {"unread": sum(not n["read"] for n in items), "items": items[:60]})
@@ -761,23 +832,23 @@ class Handler(BaseHTTPRequestHandler):
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--master", default=os.environ.get("FPP_MASTER", CONFIG["master"]))
+    ap.add_argument("--master", default=os.environ.get("FPP_MASTER"),
+                    help="the player's address for this run (default: the one saved on the Settings page)")
     ap.add_argument("--port", type=int, default=8765)
     ap.add_argument("--no-browser", action="store_true")
     ap.add_argument("--no-monitor", action="store_true", help="don't watch controllers in the background")
     args = ap.parse_args()
-    CONFIG["master"] = args.master
-    try:
-        CONFIG["master_host"] = fetch_json(f"http://{args.master}/api/system/info").get("HostName")
-    except Exception:
-        print(f"warning: player {args.master} not reachable", file=sys.stderr)
+    CONFIG["from_cli"] = bool(args.master)
+    CONFIG["master"] = args.master or fleet.load_settings()["player"] or None
+    if not CONFIG["master"]:
+        print("No player configured yet: open the UI and set it on the Settings page.", file=sys.stderr)
 
     _load_notes()
     if not args.no_monitor:
         threading.Thread(target=monitor_loop, daemon=True).start()
     srv = ThreadingHTTPServer(("127.0.0.1", args.port), Handler)
     url = f"http://127.0.0.1:{args.port}/"
-    print(f"FPP-Backup UI on {url}  (player {args.master}); Ctrl-C to stop")
+    print(f"FPP-Backup UI on {url}  (player {CONFIG['master'] or 'not set'}); Ctrl-C to stop")
     if not args.no_browser:
         threading.Timer(0.5, webbrowser.open, [url]).start()
     try:
