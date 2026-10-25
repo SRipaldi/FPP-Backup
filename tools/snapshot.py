@@ -105,7 +105,11 @@ def snapshot(base, out_root, media=False):
     # The settings file itself is not downloadable; read each value live so the
     # snapshot does not depend on how old the unit's last FPP backup is.
     try:
-        names = json.loads(get(base, "api/settings")).get("settings", {}).keys()
+        schema_blob = get(base, "api/settings")
+        # Kept for its per-setting defaults: stage_card.py uses them to tell a
+        # setting changed on the unit from one the API merely reports a default for.
+        save("api/settings-schema.json", schema_blob)
+        names = json.loads(schema_blob).get("settings", {}).keys()
         live, missing = {}, []
         for n in names:
             try:

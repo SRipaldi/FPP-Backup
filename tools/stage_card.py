@@ -17,10 +17,14 @@ applies it every boot.
 in the settings file. Ones the source lacks are taken from --reference, a
 snapshot of a unit already on the target version (the owner's own answers).
 
-Settings come from the settings file inside the unit's FPP backup, not from the
-live API: the API reports defaults for unset keys, and pinning an old version's
-defaults would defeat the upgrade. snapshot.py's live values are used only to
-confirm the backup is current.
+Settings start from the settings file inside the unit's FPP backup, because the
+live API reports defaults for unset keys and pinning an old version's defaults
+would defeat the upgrade. But that backup is only as new as the last time FPP
+made one, so live values are layered on top: a live value that differs from
+the file wins, and a key missing from the file is added when its live value
+differs from the schema default (e.g. Latitude set after the last backup).
+Values fppinit derives per box, and secrets the API will not return, are left
+alone.
 
 Config migrations: a fresh image's /etc/fpp/config_version is already current,
 so FPP will not run its upgrade/<n> scripts on restored settings. The ones that
@@ -47,6 +51,12 @@ TRANSIENT_SETTINGS = {"LastBlock", "UnpartitionedSpace", "storageDevice",
 # Config files that are caches, or replaced by a different mechanism in 10.x
 # (UI password moved from .htaccess to ui-password-config.conf).
 SKIP_CONFIG = {".htaccess", "media_durations.cache", "sequence_fps.cache"}
+# Never taken from live values: derived by fppinit on each box (audio device,
+# storage, flags), or not readable through the API (passwords come back None).
+NOT_FROM_LIVE = {"AudioOutput", "AudioMixerDevice", "ForceAudioId", "AudioCardType",
+                 "AudioCard0Type", "HostDescription", "osPassword", "osPasswordVerify",
+                 "password", "passwordVerify", "initialSetup", "initialSetup-01",
+                 "initialSetup-02"}
 CONTENT_DIRS = ["playlists", "scripts", "sequences", "music", "videos", "images", "effects"]
 # What www/common.php MissingSetupSettings() requires before 10.x skips its setup
 # page: LegalJurisdiction plus the initialSetup-privacy group minus emailAddress.
@@ -167,12 +177,33 @@ def main():
     report = {"host": manifest["host"], "source_snapshot": str(snap),
               "source_version": manifest["fpp_version"], "migrations": [],
               "dropped_settings": [], "setup_answers_from_reference": {}, "setup_still_missing": [],
-              "unknown_to_target": [], "stale_vs_live": [], "warnings": [],
-              "config_skipped": [], "files": 0, "bytes": 0}
+              "unknown_to_target": [], "updated_from_live": {}, "added_from_live": {},
+              "warnings": [], "config_skipped": [], "files": 0, "bytes": 0}
 
     live = json.loads((snap / "api/settings-live.json").read_text())
-    report["stale_vs_live"] = sorted(k for k, v in settings.items()
-                                     if k in live and live[k] is not None and str(live[k]) != str(v))
+    schema_path = snap / "api/settings-schema.json"
+    # Only entries with a "type" are user settings (a UI control); the rest
+    # (Platform, *Directory, locale, ...) are values FPP computes and the API
+    # merely reports. Those must never be written into the settings file.
+    defaults = ({k: v.get("default") for k, v in json.loads(schema_path.read_text()).get("settings", {}).items()
+                 if "type" in v}
+                if schema_path.exists() else None)
+    if defaults is None:
+        report["warnings"].append("snapshot has no settings schema; settings changed since the unit's "
+                                  "last FPP backup but absent from it cannot be detected. Re-snapshot.")
+    for k, v in live.items():
+        if v is None or k in NOT_FROM_LIVE or k in TRANSIENT_SETTINGS:
+            continue
+        if defaults is not None and k not in defaults:
+            continue  # computed value, not a setting
+        v = str(v)
+        if k in settings:
+            if v != str(settings[k]):
+                report["updated_from_live"][k] = {"backup": settings[k], "live": v}
+                settings[k] = v
+        elif defaults is not None and k in defaults and v != str(defaults[k] if defaults[k] is not None else ""):
+            report["added_from_live"][k] = v
+            settings[k] = v
 
     report["dropped_settings"] = sorted(k for k in settings if k in TRANSIENT_SETTINGS)
     settings = {k: v for k, v in settings.items() if k not in TRANSIENT_SETTINGS}
