@@ -95,3 +95,10 @@ td .why { display: block; color: var(--muted); font-size: 12px; white-space: nor
 .note-box { margin-top: 10px; padding: 10px 12px; border: 1px solid var(--warn); border-radius: 8px; background: var(--panel); }
 .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; background: var(--muted); }
 .dot.on { background: var(--ok); } .dot.off { background: var(--danger); } .dot.play { background: var(--accent); }
+.fleet-actions { margin-top: 4px; }
+label.inline { display: inline-flex; gap: 6px; align-items: center; cursor: pointer; }
+label.inline input { min-width: 0; }
+td.pick, th.pick { width: 28px; text-align: center; }
+td.pick input, th.pick input { min-width: 0; }
+#fleet-progress pre { background: var(--code-bg); color: var(--code-text); border-radius: 6px; padding: 8px; margin: 8px 0 0;
+  max-height: 220px; overflow: auto; white-space: pre-wrap; font: 12px/1.45 ui-monospace, Menlo, monospace; }

@@ -46,7 +46,18 @@
 
     <h2 class="section">Settings that should match <span class="muted small">policy</span></h2>
     <p class="muted small">Red cells differ from the expected value. <strong>Apply</strong> writes the expected value to those units only. Click a red value to make it the expected one instead (edits the policy, not the controllers).</p>
+    <div class="bar fleet-actions">
+      <div class="row">
+        <button id="fleet-update" class="primary" disabled>Update checked</button>
+        <label class="inline"><input type="checkbox" id="fleet-restart-after" checked> Restart affected players afterwards</label>
+      </div>
+      <span class="muted small">Runs one setting at a time in the background, keeps going if one fails, then rescans.</span>
+    </div>
     <div class="table-wrap"><table id="fleet-match" class="grid"></table></div>
+    <div id="fleet-progress" class="note-box" hidden>
+      <div class="row"><strong id="fleet-progress-title"></strong><span id="fleet-progress-state" class="pill running">running</span></div>
+      <pre id="fleet-progress-log"></pre>
+    </div>
     <div id="fleet-restart-note" class="note-box" hidden></div>
 
     <h2 class="section">Remotes that disagree <span class="muted small">no expected value yet</span></h2>

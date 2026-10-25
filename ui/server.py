@@ -47,9 +47,13 @@ CONFIG = {"master": "172.1.2.10"}
 # ---------------------------------------------------------------- jobs
 
 class Job:
-    def __init__(self, kind, title, steps):
+    def __init__(self, kind, title, steps, keep_going=False, after=None):
+        """keep_going: run every step even if one fails (independent actions).
+        after: called with the job when the steps are done, before the final
+        status is reported (e.g. a fleet rescan, so the UI redraws fresh data)."""
         self.id = secrets.token_hex(4)
         self.kind, self.title, self.steps = kind, title, steps
+        self.keep_going, self.after = keep_going, after
         self.lines, self.progress = [], ""
         self.status, self.started, self.ended = "running", time.time(), None
         self.cond = threading.Condition()
@@ -64,6 +68,7 @@ class Job:
             self.cond.notify_all()
 
     def run(self):
+        failed = 0
         try:
             for step in self.steps:
                 self.emit("$ " + " ".join(str(a) for a in step))
@@ -91,9 +96,17 @@ class Job:
                 if buf:
                     self.emit(line=buf.decode(errors="replace"))
                 if proc.wait() != 0:
-                    self.finish("failed", f"exit status {proc.returncode}")
-                    return
-            self.finish("done")
+                    failed += 1
+                    if not self.keep_going:
+                        self.finish("failed", f"exit status {proc.returncode}")
+                        return
+                    self.emit(f"[step failed: exit status {proc.returncode}; continuing]")
+            if self.after:
+                self.after(self)
+            if failed:
+                self.finish("failed", f"{failed} of {len(self.steps)} steps failed")
+            else:
+                self.finish("done")
         except Exception as e:  # report, never kill the server
             self.finish("failed", repr(e))
 
@@ -114,11 +127,11 @@ JOBS = {}
 JOBS_LOCK = threading.Lock()
 
 
-def start_job(kind, title, steps, exclusive=None):
+def start_job(kind, title, steps, exclusive=None, **opts):
     with JOBS_LOCK:
         if exclusive and any(j.kind == exclusive and j.status == "running" for j in JOBS.values()):
             raise ValueError(f"a {exclusive} job is already running")
-        job = Job(kind, title, steps)
+        job = Job(kind, title, steps, **opts)
         JOBS[job.id] = job
     threading.Thread(target=job.run, daemon=True).start()
     return job
@@ -273,31 +286,58 @@ def load_policy():
     return json.loads(fleet.POLICY.read_text())
 
 
-def act_fleet_apply(body):
-    """Set a policy setting to its expected value on the units that drift."""
-    name = body["setting"]
-    policy = load_policy()
-    rule = policy["match"].get(name)
-    rep = _fleet["data"]
-    if not rule or not rep:
-        raise ValueError(f"{name} is not a policy setting, or the fleet has not been scanned")
-    row = next(r for r in rep["match"] if r["name"] == name)
-    drifted = [h for h, c in row["cells"].items() if c["status"] == "drift"]
-    if not drifted:
-        raise ValueError(f"no unit drifts on {name}")
+def fleet_set_steps(name, rule, rep):
+    """fleet.py set commands that bring one policy setting to its expected value
+    on the units that drift; returns (steps, drifted hosts)."""
+    row = next((r for r in rep["match"] if r["name"] == name), None)
+    drifted = [h for h, c in row["cells"].items() if c["status"] == "drift"] if row else []
     master_host = next((u["host"] for u in rep["units"] if u.get("is_master")), None)
-    others = [h for h in drifted if h != master_host]
+    base = [PY, TOOLS / "fleet.py", "--master", CONFIG["master"], "set", name]
     steps = []
+    others = [h for h in drifted if h != master_host]
     if others:
-        value = "master" if rule["value"] == "@master" else rule["value"]
-        steps.append([PY, TOOLS / "fleet.py", "--master", CONFIG["master"], "set", name, value,
-                      "--hosts", ",".join(others)])
+        steps.append(base + ["master" if rule["value"] == "@master" else rule["value"], "--hosts", ",".join(others)])
     if master_host in drifted:
-        value = rule.get("master_value", rule["value"])
-        steps.append([PY, TOOLS / "fleet.py", "--master", CONFIG["master"], "set", name, value,
-                      "--hosts", master_host])
-    _fleet["t"] = 0  # rescan on next view
-    return start_job("fleet", f"Set {name} on {', '.join(drifted)}", steps, exclusive="fleet")
+        steps.append(base + [rule.get("master_value", rule["value"]), "--hosts", master_host])
+    return steps, drifted
+
+
+def rescan_after(job):
+    job.emit("Rescanning the fleet (about 20 seconds)...")
+    rep = fleet_report(refresh=True)
+    left = [r["name"] for r in rep["match"] if r["drift"]]
+    job.emit("Rescan done: " + (f"still drifting: {', '.join(left)}" if left else "no policy drift"))
+
+
+def act_fleet_apply(body):
+    """Bring the chosen policy settings to their expected values on the units that
+    drift. One step per setting, run in turn; a failed step does not stop the rest.
+    Optionally restart the players on units that changed a setting needing it
+    (fleet.py restart skips any that are playing). Ends with a rescan.
+    Values always come from fleet-policy.json, never from the request."""
+    names = body.get("settings") or ([body["setting"]] if body.get("setting") else [])
+    policy = load_policy()
+    rep = _fleet["data"]
+    if not rep:
+        raise ValueError("the fleet has not been scanned yet")
+    unknown = [n for n in names if n not in policy["match"]]
+    if not names or unknown:
+        raise ValueError(f"not policy settings: {', '.join(unknown) or '(none chosen)'}")
+    steps, touched, restart_hosts = [], set(), set()
+    for name in names:
+        s, drifted = fleet_set_steps(name, policy["match"][name], rep)
+        steps += s
+        touched.update(drifted)
+        row = next(r for r in rep["match"] if r["name"] == name)
+        if row.get("needs"):
+            restart_hosts.update(drifted)
+    if not steps:
+        raise ValueError("none of the chosen settings drift any more; rescan")
+    if body.get("restart") and restart_hosts:
+        steps.append([PY, TOOLS / "fleet.py", "--master", CONFIG["master"], "restart",
+                      "--hosts", ",".join(sorted(restart_hosts))])
+    title = f"Fleet: set {', '.join(names)} on {len(touched)} unit(s)"
+    return start_job("fleet", title, steps, exclusive="fleet", keep_going=True, after=rescan_after)
 
 
 def act_fleet_expect(body):
@@ -326,7 +366,7 @@ def act_fleet_restart(body):
         raise ValueError("no hosts")
     return start_job("fleet", f"Restart players on {', '.join(hosts)}",
                      [[PY, TOOLS / "fleet.py", "--master", CONFIG["master"], "restart", "--hosts", ",".join(hosts)]],
-                     exclusive="fleet")
+                     exclusive="fleet", after=rescan_after)
 
 
 ACTIONS = {"snapshot": act_snapshot, "download": act_download, "build": act_build, "flash": act_flash,

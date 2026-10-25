@@ -249,10 +249,10 @@ function renderFleet() {
   const head = (first) => `<thead><tr>${first}${hosts.map((h) => `<th class="unit" title="${esc(h)}">${esc(shortHost(h))}${h === master?.host ? " ★" : ""}</th>`).join("")}<th></th></tr></thead>`;
 
   // policy settings
-  const verRow = `<tr><td><strong>FPP version</strong><span class="why">Upgrade by building a card</span></td><td>${esc(F.policy.fpp_version)}</td>` +
+  const verRow = `<tr><td class="pick"></td><td><strong>FPP version</strong><span class="why">Upgrade by building a card</span></td><td>${esc(F.policy.fpp_version)}</td>` +
     on.map((u) => `<td class="cell ${u.version_ok ? "ok" : "odd"}" title="${esc(u.version)}">${u.version_ok ? "✓" : esc(u.version)}</td>`).join("") + "<td></td></tr>";
-  $("#fleet-match").innerHTML = head("<th>Setting</th><th>Expected</th>") + "<tbody>" + F.match.map((r) => `
-    <tr><td><strong>${esc(r.name)}</strong><span class="why">${esc(r.why || r.description)}${r.needs ? ` · needs player ${r.needs}` : ""}</span></td>
+  $("#fleet-match").innerHTML = head(`<th class="pick"><input type="checkbox" id="fleet-pick-all" title="Select every drifting setting"></th><th>Setting</th><th>Expected</th>`) + "<tbody>" + F.match.map((r) => `
+    <tr><td class="pick">${r.drift ? `<input type="checkbox" data-pick="${esc(r.name)}">` : ""}</td><td><strong>${esc(r.name)}</strong><span class="why">${esc(r.why || r.description)}${r.needs ? ` · needs player ${r.needs}` : ""}</span></td>
       <td>${esc(r.expected === "@master" ? "the player" : shown(r.expected))}</td>` +
     hosts.map((h) => {
       const c = r.cells[h] || { status: "n/a" };
@@ -263,7 +263,20 @@ function renderFleet() {
     }).join("") +
     `<td>${r.drift ? `<button class="small primary" data-apply="${esc(r.name)}">Apply to ${r.drift}</button>` : ""}</td></tr>`).join("") + verRow + "</tbody>";
 
-  document.querySelectorAll("[data-apply]").forEach((b) => (b.onclick = () => applySetting(b.dataset.apply)));
+  document.querySelectorAll("[data-apply]").forEach((b) => (b.onclick = () => runFleetUpdate([b.dataset.apply])));
+  const picks = () => [...document.querySelectorAll("input[data-pick]")];
+  const syncPicks = () => {
+    const n = picks().filter((i) => i.checked).length;
+    $("#fleet-update").disabled = !n || fleetJobRunning;
+    $("#fleet-update").textContent = n ? `Update checked (${n})` : "Update checked";
+    const all = $("#fleet-pick-all");
+    all.checked = n && n === picks().length; all.indeterminate = n > 0 && n < picks().length;
+    all.disabled = !picks().length;
+  };
+  picks().forEach((i) => (i.onchange = syncPicks));
+  $("#fleet-pick-all").onchange = (e) => { picks().forEach((i) => (i.checked = e.target.checked)); syncPicks(); };
+  $("#fleet-update").onclick = () => runFleetUpdate(picks().filter((i) => i.checked).map((i) => i.dataset.pick));
+  syncPicks();
   document.querySelectorAll("td[data-expect]").forEach((td) => (td.onclick = () => makeExpected(td.dataset.expect, td.dataset.value)));
 
   // remotes that disagree
@@ -289,14 +302,49 @@ function renderFleet() {
   renderRestartNote();
 }
 
-async function applySetting(name) {
-  const r = FLEET.match.find((x) => x.name === name);
-  const drifted = Object.entries(r.cells).filter(([, c]) => c.status === "drift");
-  const lines = drifted.map(([h, c]) => `  ${h}: ${shown(c.value)} → ${shown(c.expected)}`).join("\n");
-  if (!confirm(`Change ${name} on ${drifted.length} controller(s)?\n\n${lines}\n\nThis writes to the controllers.`)) return;
-  if (r.needs) { drifted.forEach(([h]) => pendingRestart.hosts.add(h)); pendingRestart.names.add(name); }
-  FLEET = null;
-  await act("/api/fleet/apply", { setting: name });
+let fleetJobRunning = false;
+
+async function runFleetUpdate(names) {
+  const rows = names.map((n) => FLEET.match.find((x) => x.name === n)).filter((r) => r && r.drift);
+  if (!rows.length) return;
+  const restart = $("#fleet-restart-after").checked;
+  const lines = rows.map((r) => `${r.name}:\n` + Object.entries(r.cells).filter(([, c]) => c.status === "drift")
+    .map(([h, c]) => `    ${h}: ${shown(c.value)} → ${shown(c.expected)}`).join("\n")).join("\n");
+  const needs = rows.filter((r) => r.needs).map((r) => r.name);
+  const restartLine = needs.length ? (restart ? `\nAfterwards, restart the players on the affected units (${needs.join(", ")} need it); units that are playing are skipped.`
+                                              : `\n${needs.join(", ")} will need a player restart to take effect.`) : "";
+  if (!confirm(`Update ${rows.length} setting(s)? This writes to the controllers.\n\n${lines}\n${restartLine}\n\nEach setting runs in turn; the fleet is rescanned at the end.`)) return;
+  if (!restart && needs.length) {
+    rows.filter((r) => r.needs).forEach((r) => Object.entries(r.cells).filter(([, c]) => c.status === "drift").forEach(([h]) => pendingRestart.hosts.add(h)));
+    needs.forEach((n) => pendingRestart.names.add(n));
+  }
+  let job;
+  try { job = await api("/api/fleet/apply", { settings: rows.map((r) => r.name), restart }); }
+  catch (e) { toast(e.message); return; }
+  watchFleetJob(job);
+}
+
+function watchFleetJob(job) {
+  fleetJobRunning = true;
+  $("#fleet-update").disabled = true;
+  const box = $("#fleet-progress"), log = $("#fleet-progress-log"), state = $("#fleet-progress-state");
+  box.hidden = false; log.textContent = "";
+  $("#fleet-progress-title").textContent = job.title;
+  state.className = "pill running"; state.textContent = "running";
+  const es = new EventSource(`/api/jobs/${job.id}/stream`);
+  es.addEventListener("line", (e) => {
+    const line = JSON.parse(e.data);
+    if (line.startsWith("$ ")) return;  // the command itself; the tool's own output says what happened
+    log.textContent += line + "\n"; log.scrollTop = log.scrollHeight;
+  });
+  es.addEventListener("status", async (e) => {
+    const s = JSON.parse(e.data);
+    es.close();
+    fleetJobRunning = false;
+    state.className = `pill ${s}`; state.textContent = s === "done" ? "done" : "finished with errors";
+    await loadFleet(false);  // the job rescanned before reporting, so this is fresh
+    loadJobs();
+  });
 }
 
 async function makeExpected(name, value) {
@@ -318,7 +366,8 @@ function renderRestartNote() {
   $("#fleet-do-restart").onclick = async () => {
     if (!confirm(`Restart the FPP player on ${hosts.join(", ")}?\n\nEach is down for a few seconds. Units that are playing are skipped.`)) return;
     pendingRestart.hosts.clear(); pendingRestart.names.clear();
-    await act("/api/fleet/restart", { hosts });
+    renderRestartNote();
+    try { watchFleetJob(await api("/api/fleet/restart", { hosts })); } catch (e) { toast(e.message); }
   };
 }
 
