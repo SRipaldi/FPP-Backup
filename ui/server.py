@@ -208,6 +208,17 @@ def snapshots():
 def controllers():
     found = fleet.discover(CONFIG["master"], fleet.load_inventory())
     snaps = snapshots()
+
+    def status(c):  # playing / idle, for the status dot
+        try:
+            return fleet.fetch_json(f"{c['base']}/api/fppd/status", timeout=4, tries=2).get("status_name")
+        except Exception:
+            return None
+
+    online = [c for c in found if c["online"]]
+    with concurrent.futures.ThreadPoolExecutor(6) as ex:
+        for c, st in zip(online, ex.map(status, online)):
+            c["status"] = st
     for c in found:
         c.pop("base", None)
         c["image_family"] = get_image.asset_for_platform(c.get("platform") or "", c.get("variant") or "")

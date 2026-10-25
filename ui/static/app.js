@@ -4,6 +4,12 @@ const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 const gb = (b) => (b / 1e9).toFixed(b < 1e9 ? 2 : 1) + " GB";
 const mb = (b) => (b / 1e6).toFixed(1) + " MB";
+// Status dot used on every page: green online/idle, blue playing, red offline.
+const statusDot = (u) => {
+  const [cls, tip] = !u.online ? ["off", "Offline: not answering"] : u.status === "playing" ? ["play", "Online, playing"]
+    : ["on", `Online${u.status ? ", " + u.status : ""}`];
+  return `<span class="dot ${cls}" title="${tip}" aria-label="${tip}"></span>`;
+};
 const fmtTaken = (t) => t ? t.replace(/^(\d{4})(\d\d)(\d\d)-(\d\d)(\d\d).*/, "$1-$2-$3 $4:$5") : "never";
 
 async function api(path, body) {
@@ -65,7 +71,7 @@ async function loadControllers() {
       return `
       <tr class="${c.online ? "" : "offline"}" data-host="${esc(c.host)}">
         <td class="pick">${c.online ? `<input type="checkbox" data-f="pick" ${k.pick ? "checked" : ""}>` : ""}</td>
-        <td><strong>${esc(c.host)}</strong>${c.mode ? `<span class="sub">${esc(c.mode)}</span>` : ""}</td>
+        <td>${statusDot(c)}<strong>${esc(c.host)}</strong><span class="sub">${esc(c.mode || "")}${c.status ? " · " + esc(c.status) : c.online ? "" : "offline"}</span></td>
         <td>${esc(c.variant || "")}${c.cape ? `<span class="sub">cape ${esc(c.cape)}</span>` : ""}</td>
         <td>${c.online ? esc(c.version) : '<span class="bad">offline</span>'}</td>
         <td>${esc(c.ip)}${c.addresses.length > 1 ? `<span class="sub">${esc(c.addresses.filter((a) => a !== c.ip).join(", "))}</span>` : ""}</td>
@@ -370,7 +376,7 @@ function renderDashboard() {
       const status = !u.online ? '<span class="tag bad">offline</span>' : u.expected === false ? '<span class="tag warn">unknown</span>'
         : u.status === "playing" ? '<span class="tag info">playing</span>' : `<span class="tag ok">${esc(u.status || "online")}</span>`;
       return `<tr class="${u.online ? "" : "offline"}">
-        <td><span class="dot ${!u.online ? "off" : u.status === "playing" ? "play" : "on"}"></span><strong>${esc(u.host)}</strong><span class="sub">${esc(u.role || "")} · ${esc(u.ip)}</span></td>
+        <td>${statusDot(u)}<strong>${esc(u.host)}</strong><span class="sub">${esc(u.role || "")} · ${esc(u.ip)}</span></td>
         <td>${status}</td>
         <td class="${u.online && !u.version_ok ? "bad" : ""}">${esc(u.version || "—")}</td>
         <td>${updateTag(u)}</td>
@@ -531,8 +537,8 @@ function renderFleet() {
   // controllers
   const pct = (u) => u.disk_total ? Math.round(100 * u.disk_free / u.disk_total) + "% free" : "";
   $("#fleet-units").innerHTML = `<thead><tr><th>Controller</th><th>FPP</th><th>Update</th><th>Hardware</th><th>Address</th><th>Clock</th><th>Uptime</th><th>Storage</th></tr></thead><tbody>` +
-    units.map((u) => !u.online ? `<tr class="offline"><td><span class="dot off"></span><strong>${esc(u.host)}</strong></td><td colspan="7">offline · expected at ${esc(u.ip)}</td></tr>` : `
-      <tr><td><span class="dot ${u.status === "playing" ? "play" : "on"}"></span><strong>${esc(u.host)}</strong>${u.expected === false ? ' <span class="tag warn">unknown</span>' : ""}<span class="sub">${esc(u.role)}${u.status ? " · " + esc(u.status) : ""}</span></td>
+    units.map((u) => !u.online ? `<tr class="offline"><td>${statusDot(u)}<strong>${esc(u.host)}</strong></td><td colspan="7">offline · expected at ${esc(u.ip)}</td></tr>` : `
+      <tr><td>${statusDot(u)}<strong>${esc(u.host)}</strong>${u.expected === false ? ' <span class="tag warn">unknown</span>' : ""}<span class="sub">${esc(u.role)}${u.status ? " · " + esc(u.status) : ""}</span></td>
         <td class="${u.version_ok ? "" : "bad"}">${esc(u.version)}<span class="sub">${esc(u.os_version || "")}</span></td>
         <td>${updateTag(u)}</td>
         <td>${esc(u.variant || u.platform || "")}${u.cape ? `<span class="sub">cape ${esc(u.cape)}</span>` : ""}</td>
