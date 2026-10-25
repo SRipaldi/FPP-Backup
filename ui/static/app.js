@@ -30,6 +30,7 @@ async function act(path, body) {
 
 // ------------------------------------------------------------ tabs
 function showTab(name) {
+  if (location.hash !== "#" + name) history.replaceState(null, "", "#" + name);
   document.querySelectorAll("nav button").forEach((b) => b.classList.toggle("active", b.dataset.tab === name));
   document.querySelectorAll("main section").forEach((s) => (s.hidden = s.id !== "tab-" + name));
   ({ build: loadBuild, flash: loadFlash, jobs: loadJobs, fleet: () => FLEET ? renderFleet() : loadFleet(false) }[name] || (() => {}))();
@@ -197,6 +198,8 @@ function openJob(id) {
 
 // ------------------------------------------------------------ fleet
 let FLEET = null;
+let PREVIEW = false;      // FLEET is a preview of an unsaved policy
+let POLICY_OPEN = false;
 const pendingRestart = { hosts: new Set(), names: new Set() };
 const shortHost = (h) => h.replace(/^FPP-/, "");
 const shown = (v) => v === null || v === undefined ? "—" : v === "" ? "(blank)" : v;
@@ -206,7 +209,9 @@ async function loadFleet(refresh) {
   $("#fleet-refresh").disabled = true;
   try {
     FLEET = await api("/api/fleet" + (refresh ? "?refresh=1" : ""));
+    PREVIEW = false;  // a fetched report is always against the saved policy
     renderFleet();
+    if (POLICY_OPEN) await openPolicyEditor(true);
   } catch (e) {
     $("#fleet-when").innerHTML = `<span class="bad">${esc(e.message)}</span>`;
   } finally { $("#fleet-refresh").disabled = false; }
@@ -246,28 +251,32 @@ function renderFleet() {
         <td class="${u.offset_s !== null && Math.abs(u.offset_s) > 2 ? "bad" : ""}">${u.offset_s === null ? "?" : (u.offset_s > 0 ? "+" : "") + u.offset_s + " s"}<span class="sub">${esc((u.clock || "").replace(/^\w+ /, "").replace(/ \d{4}$/, ""))}</span></td>
         <td>${esc(u.uptime || "")}</td><td>${pct(u)}</td></tr>`).join("") + "</tbody>";
 
-  const head = (first) => `<thead><tr>${first}${hosts.map((h) => `<th class="unit" title="${esc(h)}">${esc(shortHost(h))}${h === master?.host ? " ★" : ""}</th>`).join("")}<th></th></tr></thead>`;
+  const head = (first) => `<thead><tr>${first}${hosts.map((h) => `<th class="unit${h === master?.host ? " player" : ""}" title="${esc(h)}${h === master?.host ? " (player)" : ""}">${esc(shortHost(h))}${h === master?.host ? " ★" : ""}</th>`).join("")}<th></th></tr></thead>`;
+  const isPlayer = (h) => h === master?.host;
+  const val = (v) => `<span class="v" title="${esc(shown(v))}">${esc(shown(v))}</span>`;
+  $("#fleet-preview-banner").hidden = !PREVIEW;
 
   // policy settings
   const verRow = `<tr><td class="pick"></td><td><strong>FPP version</strong><span class="why">Upgrade by building a card</span></td><td>${esc(F.policy.fpp_version)}</td>` +
-    on.map((u) => `<td class="cell ${u.version_ok ? "ok" : "odd"}" title="${esc(u.version)}">${u.version_ok ? "✓" : esc(u.version)}</td>`).join("") + "<td></td></tr>";
+    on.map((u) => `<td class="cell ${u.version_ok ? "ok" : "odd"}${isPlayer(u.host) ? " player" : ""}" title="${esc(u.version)}">${u.version_ok ? "✓" : esc(u.version)}</td>`).join("") + "<td></td></tr>";
   $("#fleet-match").innerHTML = head(`<th class="pick"><input type="checkbox" id="fleet-pick-all" title="Select every drifting setting"></th><th>Setting</th><th>Expected</th>`) + "<tbody>" + F.match.map((r) => `
     <tr><td class="pick">${r.drift ? `<input type="checkbox" data-pick="${esc(r.name)}">` : ""}</td><td><strong>${esc(r.name)}</strong><span class="why">${esc(r.why || r.description)}${r.needs ? ` · needs player ${r.needs}` : ""}</span></td>
-      <td>${esc(r.expected === "@master" ? "the player" : shown(r.expected))}</td>` +
+      <td>${esc(r.expected === "@master" ? "the player" : shown(r.expected))}${r.player !== null && r.player !== undefined
+        ? `<span class="sub">player: ${r.player === "*" ? "not checked" : esc(shown(r.player))}</span>` : ""}</td>` +
     hosts.map((h) => {
       const c = r.cells[h] || { status: "n/a" };
-      const cls = c.status === "n/a" ? "na" : c.status;
-      const text = c.status === "ok" ? "✓" : c.status === "n/a" ? "n/a" : esc(shown(c.value));
+      const cls = (c.status === "n/a" ? "na" : c.status) + (isPlayer(h) ? " player" : "");
+      const text = c.status === "ok" ? "✓" : c.status === "n/a" ? "n/a" : c.status === "exempt" ? "—" : val(c.value);
       return `<td class="cell ${cls}" title="${esc(h)}: ${esc(shown(c.value))}${c.expected !== undefined && c.expected !== null ? " (expected " + esc(shown(c.expected)) + ")" : ""}"
         ${c.status === "drift" ? `data-expect="${esc(r.name)}" data-value="${esc(c.value)}"` : ""}>${text}</td>`;
     }).join("") +
-    `<td>${r.drift ? `<button class="small primary" data-apply="${esc(r.name)}">Apply to ${r.drift}</button>` : ""}</td></tr>`).join("") + verRow + "</tbody>";
+    `<td>${r.drift ? `<button class="small primary" data-apply="${esc(r.name)}" ${PREVIEW ? "disabled title=\"Save the policy first\"" : ""}>Apply to ${r.drift}</button>` : ""}</td></tr>`).join("") + verRow + "</tbody>";
 
   document.querySelectorAll("[data-apply]").forEach((b) => (b.onclick = () => runFleetUpdate([b.dataset.apply])));
   const picks = () => [...document.querySelectorAll("input[data-pick]")];
   const syncPicks = () => {
     const n = picks().filter((i) => i.checked).length;
-    $("#fleet-update").disabled = !n || fleetJobRunning;
+    $("#fleet-update").disabled = !n || fleetJobRunning || PREVIEW;
     $("#fleet-update").textContent = n ? `Update checked (${n})` : "Update checked";
     const all = $("#fleet-pick-all");
     all.checked = n && n === picks().length; all.indeterminate = n > 0 && n < picks().length;
@@ -290,7 +299,7 @@ function renderFleet() {
       hosts.map((h) => {
         const v = r.cells[h];
         const odd = withAction && h !== master?.host && v !== common;
-        return `<td class="cell ${h === master?.host ? "na" : odd ? "odd" : ""}" title="${esc(h)}">${esc(shown(v))}</td>`;
+        return `<td class="cell${isPlayer(h) ? " player" + (withAction ? " muted" : "") : odd ? " odd" : ""}" title="${esc(h)}${isPlayer(h) && withAction ? " (player, not compared)" : ""}">${val(v)}</td>`;
       }).join("") +
       (withAction ? `<td><select data-for="${esc(r.name)}">${remoteVals.map((v) => `<option value="${esc(v)}" ${v === common ? "selected" : ""}>${esc(shown(v))}</option>`).join("")}</select>
         <button class="small" data-promote="${esc(r.name)}">Make expected</button></td>` : "<td></td>") + "</tr>";
@@ -370,11 +379,12 @@ async function makeExpectedMany(items) {
   const list = items.map((i) => `  ${i.setting} = ${shown(i.value)}`).join("\n");
   if (!confirm(`Make these the expected values for the whole fleet?\n\n${list}\n\nThis only edits fleet-policy.json; nothing is sent to the controllers. After the rescan, the units that differ are checked under "Settings that should match", ready for Update checked.`)) return;
   try {
-    await api("/api/fleet/expect", { items });
+    FLEET = await api("/api/fleet/expect", { items });
   } catch (e) { toast(e.message); return; }
   items.forEach((i) => precheck.add(i.setting));
-  toast(`Policy updated (${items.length}). Rescanning…`);
-  await loadFleet(true);
+  PREVIEW = false;
+  renderFleet();
+  if (POLICY_OPEN) await openPolicyEditor();
   const ticked = [...document.querySelectorAll("input[data-pick]")].filter((i) => i.checked).length;
   toast(ticked ? `${ticked} setting(s) now differ from the policy and are checked. Review, then press Update checked.`
                : "Policy updated. Every unit already matches.");
@@ -396,6 +406,133 @@ function renderRestartNote() {
   };
 }
 
+// ------------------------------------------------------------ policy editor
+let SAVED_POLICY = null, DRAFT = null, CATALOG = {};
+const clone = (o) => JSON.parse(JSON.stringify(o));
+const dirty = () => DRAFT && JSON.stringify(DRAFT) !== JSON.stringify(SAVED_POLICY);
+const byCount = (name) => Object.entries(CATALOG[name]?.values || {}).sort((a, b) => b[1] - a[1]).map(([v]) => v);
+
+$("#policy-toggle").onclick = () => (POLICY_OPEN ? closePolicyEditor() : openPolicyEditor());
+
+async function openPolicyEditor(keepDraft) {
+  const d = await api("/api/fleet/policy");
+  CATALOG = d.catalog || {};
+  const hadChanges = keepDraft && dirty();
+  SAVED_POLICY = d.policy;
+  if (!hadChanges) DRAFT = clone(d.policy);
+  POLICY_OPEN = true;
+  $("#policy-editor").hidden = false;
+  $("#policy-toggle").textContent = "Close policy editor";
+  renderPolicyEditor();
+}
+
+function closePolicyEditor() {
+  if (dirty() && !confirm("Close the editor and discard unsaved policy changes?")) return;
+  POLICY_OPEN = false;
+  $("#policy-editor").hidden = true;
+  $("#policy-toggle").textContent = "Edit policy";
+  if (PREVIEW) loadFleet(false);
+}
+
+function policyStatus(text) {
+  $("#pol-status").innerHTML = text || (dirty() ? '<span class="warn">Unsaved changes.</span> Preview to see the effect on the fleet.' : "Matches the saved policy.");
+}
+
+function renderPolicyEditor() {
+  const ver = $("#pol-version");
+  ver.value = DRAFT.fpp_version || "";
+  ver.oninput = () => { DRAFT.fpp_version = ver.value.trim(); policyStatus(); };
+  const options = (name) => byCount(name).map((v) => `<option value="${esc(v)}">${esc(shown(v))} (${CATALOG[name].values[v]} unit${CATALOG[name].values[v] > 1 ? "s" : ""})</option>`).join("");
+  $("#pol-match").innerHTML = `<thead><tr><th>Setting</th><th>Expected</th><th>Player (${esc(FLEET?.units.find((u) => u.is_master)?.host || "master")})</th><th>Also accept</th><th>Note</th><th></th></tr></thead><tbody>` +
+    Object.entries(DRAFT.match).map(([name, r]) => {
+      const mode = r.player === undefined ? "same" : r.player === "*" ? "skip" : "value";
+      return `<tr data-name="${esc(name)}">
+        <td class="name"><strong>${esc(name)}</strong><span class="why">${esc(CATALOG[name]?.description || "")}</span></td>
+        <td class="w-val"><input data-f="value" value="${esc(r.value)}" list="vals-${esc(name)}" title="${name === "ntpServer" ? "@master = the player's address on each unit's subnet" : ""}"><datalist id="vals-${esc(name)}">${options(name)}</datalist></td>
+        <td class="w-player"><div class="row">
+          <select data-f="mode">
+            <option value="same" ${mode === "same" ? "selected" : ""}>Same as remotes</option>
+            <option value="value" ${mode === "value" ? "selected" : ""}>Its own value</option>
+            <option value="skip" ${mode === "skip" ? "selected" : ""}>Not checked</option>
+          </select>
+          <input data-f="player" value="${esc(mode === "value" ? r.player : "")}" list="vals-${esc(name)}" ${mode === "value" ? "" : "hidden"} placeholder="(blank)">
+        </div></td>
+        <td class="w-val"><input data-f="equivalent" value="${esc((r.equivalent || []).join(", "))}" placeholder="aliases, comma separated"></td>
+        <td class="w-note"><input data-f="why" value="${esc(r.why || "")}"></td>
+        <td><button class="small" data-f="remove" title="Remove from the policy">✕</button></td></tr>`;
+    }).join("") + "</tbody>";
+
+  const markRows = () => document.querySelectorAll("#pol-match tr[data-name]").forEach((tr) =>
+    tr.classList.toggle("changed", JSON.stringify(DRAFT.match[tr.dataset.name]) !== JSON.stringify(SAVED_POLICY.match[tr.dataset.name])));
+  document.querySelectorAll("#pol-match tr[data-name]").forEach((tr) => {
+    const name = tr.dataset.name, r = DRAFT.match[name];
+    const f = (k) => tr.querySelector(`[data-f="${k}"]`);
+    const update = () => {
+      r.value = f("value").value;
+      const mode = f("mode").value;
+      f("player").hidden = mode !== "value";
+      if (mode === "same") delete r.player; else r.player = mode === "skip" ? "*" : f("player").value;
+      const eq = f("equivalent").value.split(",").map((x) => x.trim()).filter(Boolean);
+      if (eq.length) r.equivalent = eq; else delete r.equivalent;
+      if (f("why").value) r.why = f("why").value; else delete r.why;
+      markRows(); policyStatus();
+    };
+    ["value", "player", "equivalent", "why"].forEach((k) => (f(k).oninput = update));
+    f("mode").onchange = update;
+    f("remove").onclick = () => { delete DRAFT.match[name]; renderPolicyEditor(); };
+  });
+  markRows();
+
+  const used = () => new Set([...Object.keys(DRAFT.match), ...DRAFT.compare, ...DRAFT.per_unit]);
+  const addOptions = (exclude) => `<option value="">Choose a setting…</option>` + Object.keys(CATALOG).filter((n) => !exclude.has(n))
+    .map((n) => `<option value="${esc(n)}">${esc(n)}${CATALOG[n].description ? " — " + esc(CATALOG[n].description) : ""}</option>`).join("");
+  $("#pol-add-name").innerHTML = addOptions(new Set(Object.keys(DRAFT.match)));
+  $("#pol-add").onclick = () => {
+    const name = $("#pol-add-name").value;
+    if (!name) return;
+    DRAFT.match[name] = { value: byCount(name)[0] ?? "" };
+    DRAFT.compare = DRAFT.compare.filter((n) => n !== name);
+    DRAFT.per_unit = DRAFT.per_unit.filter((n) => n !== name);
+    renderPolicyEditor();
+  };
+  const chipList = (key, box, sel, btn) => {
+    $(box).innerHTML = DRAFT[key].map((n) => `<span class="chip" title="${esc(CATALOG[n]?.description || "")}">${esc(n)}<button class="x" data-rm="${esc(n)}" title="Remove">✕</button></span>`).join("") || '<span class="muted small">none</span>';
+    $(box).querySelectorAll("[data-rm]").forEach((b) => (b.onclick = () => { DRAFT[key] = DRAFT[key].filter((n) => n !== b.dataset.rm); renderPolicyEditor(); }));
+    $(sel).innerHTML = addOptions(used());
+    $(btn).onclick = () => { const n = $(sel).value; if (n) { DRAFT[key].push(n); renderPolicyEditor(); } };
+  };
+  chipList("compare", "#pol-compare", "#pol-compare-add", "#pol-compare-btn");
+  chipList("per_unit", "#pol-perunit", "#pol-perunit-add", "#pol-perunit-btn");
+  policyStatus();
+}
+
+$("#pol-preview").onclick = async () => {
+  try {
+    FLEET = await api("/api/fleet/preview", { policy: DRAFT });
+    PREVIEW = dirty();
+    renderFleet();
+    const n = FLEET.match.filter((r) => r.drift).length;
+    policyStatus(`${PREVIEW ? "Previewing unsaved changes" : "No changes"}: ${n} setting(s) would drift. ${PREVIEW ? "Save to keep them." : ""}`);
+  } catch (e) { toast(e.message); }
+};
+$("#pol-save").onclick = async () => {
+  if (!dirty()) { toast("No policy changes to save."); return; }
+  try {
+    FLEET = await api("/api/fleet/policy", { policy: DRAFT });
+    PREVIEW = false;
+    renderFleet();
+    await openPolicyEditor(false);
+    toast("Policy saved. Drifting settings can now be updated.");
+  } catch (e) { toast(e.message); }
+};
+$("#pol-discard").onclick = async () => {
+  DRAFT = clone(SAVED_POLICY);
+  renderPolicyEditor();
+  if (PREVIEW) await loadFleet(false);
+};
+
 setInterval(() => { if (!$("#tab-jobs").hidden || !$("#jobs-badge").hidden) loadJobs(); }, 3000);
 loadControllers();
+const startTab = location.hash.slice(1);
+if (startTab && document.getElementById("tab-" + startTab)) showTab(startTab);
 loadJobs();

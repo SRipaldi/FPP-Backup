@@ -168,14 +168,66 @@ def effective(entry):
     return "" if v is None else str(v)
 
 
-def drift_report(master, policy_path=POLICY):
-    """Scan every unit and compare it with the policy. Read-only.
+NAME_RE = re.compile(r"^[\w\-]+$")
 
-    Returns units (identity, health), 'match' rows (expected value per unit,
-    status ok/equivalent/drift/n-a), 'compare' rows and any other setting that
-    differs within a role. Secret settings are never included."""
-    policy = json.loads(Path(policy_path).read_text())
-    secret = re.compile(policy["secret_pattern"], re.I)
+
+def load_policy(path=POLICY):
+    return validate_policy(json.loads(Path(path).read_text()))
+
+
+def validate_policy(policy):
+    """Check a policy's shape and return it normalised. Raises ValueError.
+
+    A match rule is {"value", "player"?, "equivalent"?, "min_version"?, "why"?}.
+    "player" is the player's own expected value when it differs from the
+    remotes, or "*" to leave the player unchecked; the older "master_value"
+    is read as "player"."""
+    if not isinstance(policy, dict):
+        raise ValueError("policy must be an object")
+    secret = re.compile(policy.get("secret_pattern") or "pass|psk|secret|token|key", re.I)
+
+    def text(v, what):
+        if not isinstance(v, (str, int, float)) or isinstance(v, bool):
+            raise ValueError(f"{what} must be text")
+        v = str(v)
+        if len(v) > 200 or "\n" in v:
+            raise ValueError(f"{what} is too long or has a line break")
+        return v
+
+    def names(lst, what):
+        if not isinstance(lst, list) or not all(isinstance(n, str) and NAME_RE.match(n) for n in lst):
+            raise ValueError(f"{what} must be a list of setting names")
+        return list(dict.fromkeys(lst))
+
+    match = {}
+    for name, rule in (policy.get("match") or {}).items():
+        if not NAME_RE.match(name):
+            raise ValueError(f"bad setting name {name!r}")
+        if secret.search(name) and not name.endswith("Enable"):
+            raise ValueError(f"{name} looks like a secret; it cannot be in the policy")
+        if not isinstance(rule, dict) or "value" not in rule:
+            raise ValueError(f"{name}: needs an expected value")
+        r = {"value": text(rule["value"], f"{name} value")}
+        player = rule.get("player", rule.get("master_value"))
+        if player is not None:
+            r["player"] = text(player, f"{name} player value")
+        if rule.get("equivalent"):
+            r["equivalent"] = [text(v, f"{name} equivalent") for v in rule["equivalent"]]
+        if rule.get("min_version") not in (None, ""):
+            r["min_version"] = int(rule["min_version"])
+        if rule.get("why"):
+            r["why"] = text(rule["why"], f"{name} note")
+        match[name] = r
+    out = {"_comment": policy.get("_comment", ""), "master": text(policy.get("master", DEFAULT_MASTER), "master"),
+           "fpp_version": text(policy.get("fpp_version", ""), "fpp_version"), "match": match,
+           "compare": [n for n in names(policy.get("compare", []), "compare") if n not in match],
+           "per_unit": names(policy.get("per_unit", []), "per_unit"),
+           "secret_pattern": secret.pattern}
+    return out
+
+
+def scan_fleet(master):
+    """Everything drift evaluation needs, from the controllers. Read-only, ~20 s."""
     units = discover(master)
     online = [u for u in units if u["online"]]
     with concurrent.futures.ThreadPoolExecutor(5) as ex:
@@ -191,12 +243,26 @@ def drift_report(master, policy_path=POLICY):
         except Exception:
             pass
         a = audits[u["host"]]
-        u.update(clock=a.get("clock"), offset_s=a.get("offset_s"), status=a.get("status"),
-                 role="player" if u["is_master"] else "remote")
+        u.update(clock=a.get("clock"), offset_s=a.get("offset_s"), status=a.get("status"))
         u.pop("base", None)
     for u in units:
-        if not u["online"]:
-            u["role"] = "remote"
+        u["role"] = "player" if u.get("is_master") else "remote"
+    return {"master": master, "scanned": time.time(), "units": units, "scans": scans}
+
+
+def evaluate(scan, policy):
+    """Compare a scan with a policy. Pure: no network, so a proposed policy can be
+    previewed instantly against the last scan.
+
+    Returns units, 'match' rows (expected value and status ok/equivalent/drift/
+    exempt/n-a per unit), 'compare' rows, 'other' settings that differ, and
+    'per_unit' rows. Secret settings are never included."""
+    secret = re.compile(policy["secret_pattern"], re.I)
+    master = scan["master"]
+    units = [dict(u) for u in scan["units"]]
+    scans = scan["scans"]
+    online = [u for u in units if u["online"]]
+    for u in units:
         u["version_ok"] = u.get("version") == policy.get("fpp_version") if u["online"] else None
 
     def major(u):
@@ -213,12 +279,13 @@ def drift_report(master, policy_path=POLICY):
             if rule.get("min_version") and major(u) < rule["min_version"]:
                 cells[u["host"]] = {"value": None, "expected": None, "status": "n/a"}
                 continue
-            expected = rule["value"]
-            if expected == "@master":
-                expected = rule.get("master_value", "") if u["is_master"] else ntp_for(u, units, master)
-            elif u["is_master"] and "master_value" in rule:
-                expected = rule["master_value"]
             got = effective(entry)
+            if u["is_master"] and rule.get("player") == "*":
+                cells[u["host"]] = {"value": got, "expected": None, "status": "exempt"}
+                continue
+            expected = rule.get("player", rule["value"]) if u["is_master"] else rule["value"]
+            if expected == "@master":
+                expected = "" if u["is_master"] else ntp_for(u, units, master)
             if entry is None:
                 status = "n/a"
             elif got == expected:
@@ -230,7 +297,7 @@ def drift_report(master, policy_path=POLICY):
             cells[u["host"]] = {"value": got, "expected": expected, "status": status}
         meta = next((scans[h][name] for h in scans if name in scans[h]), {})
         match_rows.append({"name": name, "why": rule.get("why", ""), "expected": rule["value"],
-                           "description": meta.get("description", ""),
+                           "player": rule.get("player"), "description": meta.get("description", ""),
                            "needs": "reboot" if meta.get("reboot") else "restart" if meta.get("restart") else None,
                            "cells": cells, "drift": sum(c["status"] == "drift" for c in cells.values())})
 
@@ -251,13 +318,33 @@ def drift_report(master, policy_path=POLICY):
     known = set(policy["match"]) | set(policy["compare"]) | set(policy["per_unit"])
     all_names = sorted(set().union(*[s.keys() for s in scans.values()])) if scans else []
     return {
-        "master": master, "policy": {k: policy[k] for k in ("fpp_version",)},
-        "scanned": time.time(), "units": units,
+        "master": master, "policy": {"fpp_version": policy.get("fpp_version")},
+        "scanned": scan["scanned"], "units": units,
         "match": match_rows,
         "compare": role_rows(policy["compare"], "compare"),
         "other": role_rows([n for n in all_names if n not in known], "other"),
         "per_unit": role_rows([n for n in policy["per_unit"] if any(n in s for s in scans.values())], "per_unit"),
     }
+
+
+def setting_catalog(scan, policy):
+    """Every non-secret setting seen in a scan, with its description and the
+    values units have, for the policy editor's pickers."""
+    secret = re.compile(policy["secret_pattern"], re.I)
+    out = {}
+    for host, s in scan["scans"].items():
+        for name, e in s.items():
+            if secret.search(name) and not name.endswith("Enable"):
+                continue
+            c = out.setdefault(name, {"description": e.get("description") or "", "values": {}})
+            v = effective(e)
+            c["values"][v] = c["values"].get(v, 0) + 1
+    return dict(sorted(out.items(), key=lambda kv: kv[0].lower()))
+
+
+def drift_report(master, policy_path=POLICY):
+    """Scan every unit and compare it with the policy file. Read-only."""
+    return evaluate(scan_fleet(master), load_policy(policy_path))
 
 
 def cmd_drift(args):

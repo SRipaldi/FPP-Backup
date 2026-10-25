@@ -12,7 +12,7 @@
     },
     "ntpServer": {
       "value": "@master",
-      "master_value": "",
+      "player": "",
       "why": "Remotes sync time from the player; the player from the internet pool"
     },
     "Latitude": {
@@ -65,8 +65,8 @@
       "why": "Same UI options everywhere"
     },
     "verbosePlaylistItemDetails": {
-      "why": "Added from the Fleet page",
-      "value": "0"
+      "value": "0",
+      "why": "Added from the Fleet page"
     }
   },
   "compare": [

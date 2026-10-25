@@ -102,3 +102,25 @@ td.pick, th.pick { width: 28px; text-align: center; }
 td.pick input, th.pick input { min-width: 0; }
 #fleet-progress pre { background: var(--code-bg); color: var(--code-text); border-radius: 6px; padding: 8px; margin: 8px 0 0;
   max-height: 220px; overflow: auto; white-space: pre-wrap; font: 12px/1.45 ui-monospace, Menlo, monospace; }
+/* player column, long values, policy editor */
+th.unit.player, td.cell.player { background: color-mix(in srgb, var(--accent) 8%, transparent); }
+td.cell.muted { color: var(--muted); }
+td.cell.na { color: var(--muted); opacity: .6; }
+td.cell.exempt { color: var(--muted); }
+td.cell .v { display: inline-block; max-width: 110px; overflow: hidden; text-overflow: ellipsis; vertical-align: bottom; }
+.preview-banner { border-color: var(--accent); }
+.policy-editor { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 14px 16px; margin: 8px 0 4px; }
+.policy-editor h3 { font-size: 13px; margin: 16px 0 6px; }
+.policy-editor input { min-width: 0; width: 100%; padding: 4px 8px; }
+.policy-editor input.narrow { width: 90px; }
+.policy-editor select { padding: 4px 8px; }
+table.policy td { vertical-align: middle; white-space: normal; }
+table.policy td.name { min-width: 170px; }
+table.policy td.w-val { min-width: 150px; }
+table.policy td.w-player { min-width: 220px; }
+table.policy td.w-note { min-width: 200px; }
+table.policy tr.changed td { background: color-mix(in srgb, var(--warn) 10%, transparent); }
+.add-row { margin-top: 8px; }
+.chip .x { border: none; background: none; padding: 0 0 0 6px; color: var(--muted); cursor: pointer; }
+.chip .x:hover { color: var(--danger); }
+.policy-buttons { margin: 16px 0 0; }

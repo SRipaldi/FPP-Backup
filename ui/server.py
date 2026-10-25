@@ -270,20 +270,29 @@ def act_flash(body):
 
 # ---------------------------------------------------------------- fleet
 
-_fleet = {"t": 0, "data": None, "lock": threading.Lock()}
+_fleet = {"t": 0, "scan": None, "data": None, "lock": threading.Lock()}
 
 
 def fleet_report(refresh=False):
-    """tools/fleet.py's drift report, cached: a full scan takes ~20 s."""
+    """tools/fleet.py's drift report. The scan (~20 s, read-only) is cached for
+    five minutes; the policy is re-evaluated on every call, which is instant, so
+    policy edits show up without rescanning."""
     with _fleet["lock"]:
-        if refresh or _fleet["data"] is None or time.time() - _fleet["t"] > 300:
-            _fleet["data"] = fleet.drift_report(CONFIG["master"])
+        if refresh or _fleet["scan"] is None or time.time() - _fleet["t"] > 300:
+            _fleet["scan"] = fleet.scan_fleet(CONFIG["master"])
             _fleet["t"] = time.time()
+        _fleet["data"] = fleet.evaluate(_fleet["scan"], load_policy())
         return _fleet["data"]
 
 
 def load_policy():
-    return json.loads(fleet.POLICY.read_text())
+    return fleet.load_policy()
+
+
+def save_policy(policy):
+    policy = fleet.validate_policy(policy)
+    fleet.POLICY.write_text(json.dumps(policy, indent=2) + "\n")
+    return policy
 
 
 def fleet_set_steps(name, rule, rep):
@@ -297,8 +306,9 @@ def fleet_set_steps(name, rule, rep):
     others = [h for h in drifted if h != master_host]
     if others:
         steps.append(base + ["master" if rule["value"] == "@master" else rule["value"], "--hosts", ",".join(others)])
-    if master_host in drifted:
-        steps.append(base + [rule.get("master_value", rule["value"]), "--hosts", master_host])
+    if master_host in drifted and rule.get("player") != "*":
+        value = rule.get("player", rule["value"])
+        steps.append(base + ["" if value == "@master" else value, "--hosts", master_host])
     return steps, drifted
 
 
@@ -317,9 +327,9 @@ def act_fleet_apply(body):
     Values always come from fleet-policy.json, never from the request."""
     names = body.get("settings") or ([body["setting"]] if body.get("setting") else [])
     policy = load_policy()
-    rep = _fleet["data"]
-    if not rep:
+    if _fleet["scan"] is None:
         raise ValueError("the fleet has not been scanned yet")
+    rep = fleet.evaluate(_fleet["scan"], policy)  # the current policy, not the last report
     unknown = [n for n in names if n not in policy["match"]]
     if not names or unknown:
         raise ValueError(f"not policy settings: {', '.join(unknown) or '(none chosen)'}")
@@ -347,8 +357,7 @@ def act_fleet_expect(body):
     Edits fleet-policy.json only; nothing is sent to a controller."""
     items = body.get("items") or [{"setting": body.get("setting"), "value": body.get("value")}]
     policy = load_policy()
-    rep = _fleet["data"] or {}
-    known = {r["name"] for k in ("match", "compare", "other") for r in rep.get(k, [])}
+    known = set(fleet.setting_catalog(_fleet["scan"], policy)) if _fleet["scan"] else set()
     for it in items:
         name, value = it.get("setting"), it.get("value")
         if not isinstance(name, str) or not re.match(r"^[\w\-]+$", name) or value is None:
@@ -364,9 +373,21 @@ def act_fleet_expect(body):
         rule["value"] = str(it["value"])
         if name in policy["compare"]:
             policy["compare"].remove(name)
-    fleet.POLICY.write_text(json.dumps(policy, indent=2) + "\n")
-    _fleet["t"] = 0
-    return None
+    save_policy(policy)
+    return fleet_report()
+
+
+def act_fleet_preview(body):
+    """Evaluate a proposed policy against the last scan. Nothing is saved or sent."""
+    if _fleet["scan"] is None:
+        raise ValueError("the fleet has not been scanned yet")
+    return fleet.evaluate(_fleet["scan"], fleet.validate_policy(body.get("policy")))
+
+
+def act_fleet_policy_save(body):
+    """Validate and write fleet-policy.json; returns the report under the new policy."""
+    save_policy(body.get("policy"))
+    return fleet_report()
 
 
 def act_fleet_restart(body):
@@ -379,7 +400,8 @@ def act_fleet_restart(body):
 
 
 ACTIONS = {"snapshot": act_snapshot, "download": act_download, "build": act_build, "flash": act_flash,
-           "fleet/apply": act_fleet_apply, "fleet/expect": act_fleet_expect, "fleet/restart": act_fleet_restart}
+           "fleet/apply": act_fleet_apply, "fleet/expect": act_fleet_expect, "fleet/restart": act_fleet_restart,
+           "fleet/preview": act_fleet_preview, "fleet/policy": act_fleet_policy_save}
 
 
 # ---------------------------------------------------------------- http
@@ -427,6 +449,10 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send(200, cards())
             if path == "/api/fleet":
                 return self.send(200, fleet_report(refresh="refresh=1" in self.path))
+            if path == "/api/fleet/policy":
+                policy = load_policy()
+                return self.send(200, {"policy": policy, "catalog": fleet.setting_catalog(_fleet["scan"], policy)
+                                       if _fleet["scan"] else {}})
             if path == "/api/jobs":
                 return self.send(200, [j.summary() for j in sorted(JOBS.values(), key=lambda j: -j.started)])
             m = re.match(r"^/api/jobs/(\w+)/stream$", path)
@@ -444,8 +470,8 @@ class Handler(BaseHTTPRequestHandler):
             return self.send(404, {"error": "not found"})
         try:
             body = json.loads(self.rfile.read(int(self.headers.get("Content-Length") or 0)) or b"{}")
-            job = ACTIONS[m.group(1)](body)
-            self.send(200, job.summary() if job else {"ok": True})
+            result = ACTIONS[m.group(1)](body)
+            self.send(200, result.summary() if isinstance(result, Job) else result if result is not None else {"ok": True})
         except (KeyError, ValueError, RuntimeError) as e:
             self.send(400, {"error": str(e)})
 
