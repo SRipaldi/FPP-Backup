@@ -60,6 +60,7 @@ The fleet is a real, running light show.
 
 - **Controllers are untrusted input.** Anything a unit reports (hostname, file names, settings, sequence names) can come from a rogue device on the show network. Hostnames must match `^[A-Za-z0-9][A-Za-z0-9-]{0,62}$` before they become paths; file names from a listing must stay inside the snapshot (`snapshot.py save()`); values that reach a shell script are filtered to safe characters (`stage_card.rootfs_script`); everything shown in the UI goes through `esc()`.
 - **Secrets on disk**: snapshot, stage and build tools set `umask 077`.
+- **Incremental media** (`snapshot.py`): reused files are hard links into the previous snapshot. Never write into a snapshot after it is taken (that would change older ones too); the reuse rule is same size and a listing mtime older than the previous snapshot's start minus 10 minutes, or an identical recorded mtime.
 - **Supply chain**: FPP images are checked against the SHA-256 GitHub publishes (`get_image.py`); the build container is pinned by digest (`BUILDER_IMAGE` in `build_image.sh`); bb-imager-cli is built `--locked` from a pinned commit. Bump pins deliberately.
 - **xLights automation port** (49913) has no auth, binds all interfaces and allows any origin; never leave it on in instructions or defaults.
 

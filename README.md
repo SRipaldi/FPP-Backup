@@ -69,7 +69,7 @@ The landing page. Tiles for controllers online vs expected, policy drift, contro
 The **↻** next to a controller's name, on the Dashboard, Fleet and Controllers pages, rescans just that controller: about 15 seconds instead of a minute for the whole fleet (the Controllers page only refreshes its status, in a moment).
 
 ### Backup > Controllers
-Tick controllers, tick **Media** for the ones whose sequences, music and video you also want, then **Back up selected** (or **Back up all**). Each backup is a timestamped folder under `snapshots/<host>/`. Backing up only reads from the controllers. Take a backup with media before rebuilding a controller's card.
+Tick controllers, tick **Media** for the ones whose sequences, music and video you also want, then **Back up selected** (or **Back up all**). Each backup is a timestamped folder under `snapshots/<host>/`. Media is incremental: a file the controller hasn't changed since its previous backup is hard-linked from that backup instead of downloaded, so a repeat backup takes seconds and no extra disk space, yet every backup folder is still complete. (`tools/snapshot.py --full` downloads everything.) Backing up only reads from the controllers. Take a backup with media before rebuilding a controller's card.
 
 ### Fleet Management > Fleet
 Every controller compared with the fleet policy. Red cells differ from the expected value.
