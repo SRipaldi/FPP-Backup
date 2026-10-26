@@ -380,9 +380,11 @@ function renderDashboard() {
   const patched = online.filter((u) => u.update?.patch_commits > 0);
   if (patched.length) add("warn", `Newer commits on their branch: ${patched.map((u) => `${esc(u.host)} (${u.update.patch_commits} on ${esc(u.branch)})`).join(", ")}.`, "fleet", "Fleet");
   // A gateway that differs from the last backup: typically one an upgrade dropped.
+  // Not flagged when the new value is what the policy expects (that change was a fix).
   const gwOf = (g) => g ? esc(g) : "none";
+  const gwCells = (R.match.find((r) => r.kind === "network") || {}).cells || {};
   units.filter((u) => u.online && u.net && u.net.gateway !== null && B[u.host] && B[u.host].gateway !== null && B[u.host].gateway !== undefined
-    && u.net.gateway !== B[u.host].gateway).forEach((u) =>
+    && u.net.gateway !== B[u.host].gateway && gwCells[u.host]?.status !== "ok").forEach((u) =>
     add("warn", `<strong>${esc(u.host)}</strong>'s gateway changed since its last backup: ${gwOf(B[u.host].gateway)} → ${gwOf(u.net.gateway)}.`, "fleet", "Fleet"));
   if (driftRows.length) add("warn", `${driftRows.length} policy setting${driftRows.length === 1 ? "" : "s"} differ: ${driftRows.map((r) => r.kind === "network" ? "Gateway" : esc(r.name)).join(", ")}.`, "fleet", "Fleet");
   clockBad.forEach((u) => add("warn", `<strong>${esc(u.host)}</strong> clock is ${u.offset_s > 0 ? "+" : ""}${u.offset_s} s off.`, "fleet", "Fleet"));
