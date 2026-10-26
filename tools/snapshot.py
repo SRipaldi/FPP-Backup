@@ -10,8 +10,8 @@ committed. snapshots/ is in .gitignore.
 
 Media is incremental: a media file is hard-linked from the unit's previous
 snapshot instead of downloaded when that snapshot has it with the same size and
-the controller's listing shows it was last modified before that snapshot
-started (or with the same recorded modification time). Every snapshot is still
+the same modification time as the controller's listing now shows (for older
+snapshots that recorded no time: a listing time well before that snapshot started). Every snapshot is still
 complete on its own; linked files take no extra space, and deleting an old
 snapshot does not affect newer ones. Config files are always downloaded.
 --full downloads everything.
@@ -136,10 +136,17 @@ def snapshot(base, out_root, media=False, full=False):
         old = pman.get("files", {}).get(rel)
         if not old or old.get("bytes") != entry.get("sizeBytes"):
             return False
-        mt = listing_mtime(entry.get("mtime"))
-        if not ((old.get("mtime") and old["mtime"] == entry.get("mtime"))
-                or (mt and mt < ptaken - REUSE_MARGIN)):
-            return False
+        if old.get("mtime"):
+            # Recorded last time: it must be identical. "Older than the last snapshot"
+            # is not enough on its own, because a BeagleBone (no clock battery) can
+            # stamp an upload with a stale date before NTP corrects its clock.
+            if old["mtime"] != entry.get("mtime"):
+                return False
+        else:
+            # Snapshots from before mtimes were recorded: modified well before it started.
+            mt = listing_mtime(entry.get("mtime"))
+            if not mt or mt >= ptaken - REUSE_MARGIN:
+                return False
         src, dst = pdir / rel, inside(rel)
         if not src.is_file() or src.stat().st_size != old["bytes"]:
             return False
