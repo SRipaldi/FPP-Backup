@@ -940,6 +940,10 @@ ACTIONS = {"snapshot": act_snapshot, "backup": act_backup, "download": act_downl
 
 # ---------------------------------------------------------------- http
 
+ICONS = {"/icon.svg": ("icon.svg", "image/svg+xml"), "/icon-32.png": ("icon-32.png", "image/png"),
+         "/icon-180.png": ("icon-180.png", "image/png"), "/favicon.ico": ("icon-32.png", "image/png")}
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = "FPPBackup"
 
@@ -978,6 +982,9 @@ class Handler(BaseHTTPRequestHandler):
             if path in ("/app.js", "/style.css"):
                 ctype = "text/javascript" if path.endswith(".js") else "text/css"
                 return self.send(200, (STATIC / path[1:]).read_bytes(), ctype + "; charset=utf-8")
+            if path in ICONS:  # the tab icon; browsers also ask for /favicon.ico on their own
+                name, ctype = ICONS[path]
+                return self.send(200, (STATIC / name).read_bytes(), ctype)
             if path == "/api/controllers":
                 return self.send(200, {"master": CONFIG["master"], "controllers": controllers()})
             if path == "/api/snapshots":

@@ -237,3 +237,5 @@ label.switch input:checked + .track { background: var(--ok); }
 label.switch input:checked + .track::after { transform: translateX(14px); }
 label.switch input:focus-visible + .track { outline: 2px solid var(--accent); outline-offset: 2px; }
 .pw-label { min-width: 130px; font-size: 13px; color: var(--muted); }
+h1.brand { display: inline-flex; align-items: center; gap: 10px; }
+h1.brand img { flex: none; border-radius: 6px; }
