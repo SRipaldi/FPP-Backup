@@ -12,7 +12,7 @@ copy on the controller must carry the same render ID and frame count as the
 status and versions are read-only. push writes one .fseq to each named
 controller; the player also gets the audio (remotes play no audio in MultiSync).
 
-versions reads the render ID of every scheduled sequence on the chosen
+versions (allowed during a show, at a gentler pace) reads the render ID of every scheduled sequence on the chosen
 controllers (one small request per file, through the player's proxy, so it
 takes a few minutes for a whole fleet) and keeps the result in
 work/cache/sequence-versions.json; a copy whose ID differs from the show
@@ -185,8 +185,11 @@ def cmd_versions(args):
         state = fleet.fetch_json(f"http://{args.master}/api/fppd/status").get("status_name")
     except Exception as e:
         sys.exit(f"cannot read the player's status: {e}")
+    # Read-only, so it may run during a show, but at half the pace: the player's
+    # proxy is also carrying the show's status traffic.
+    workers = 4 if state == "idle" else 2
     if state != "idle":
-        sys.exit(f"the player is {state}; not loading its proxy during a show")
+        print(f"The player is {state}: reading at a gentler pace.")
 
     work = []
     for u in units:
@@ -208,7 +211,7 @@ def cmd_versions(args):
     print(f"Reading {len(work)} sequence headers from {len(units)} controller(s)...", flush=True)
     found = {}
     # 4 at a time: every request goes through the player's proxy (see fleet.scan_fleet).
-    with concurrent.futures.ThreadPoolExecutor(4) as ex:
+    with concurrent.futures.ThreadPoolExecutor(workers) as ex:
         for i, (host, n, v) in enumerate(ex.map(one, work), 1):
             found.setdefault(host, {})[n] = v
             print(f"\r  {i}/{len(work)} {host} {n[:50]}", end="", file=sys.stderr, flush=True)

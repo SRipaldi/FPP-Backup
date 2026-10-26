@@ -379,7 +379,12 @@ function renderDashboard() {
     add("warn", `FPP ${esc(R.releases.latest)} has been released; the policy targets ${esc(target)}.`, "fleet", "Fleet");
   const patched = online.filter((u) => u.update?.patch_commits > 0);
   if (patched.length) add("warn", `Newer commits on their branch: ${patched.map((u) => `${esc(u.host)} (${u.update.patch_commits} on ${esc(u.branch)})`).join(", ")}.`, "fleet", "Fleet");
-  if (driftRows.length) add("warn", `${driftRows.length} policy setting${driftRows.length === 1 ? "" : "s"} differ: ${driftRows.map((r) => esc(r.name)).join(", ")}.`, "fleet", "Fleet");
+  // A gateway that differs from the last backup: typically one an upgrade dropped.
+  const gwOf = (g) => g ? esc(g) : "none";
+  units.filter((u) => u.online && u.net && u.net.gateway !== null && B[u.host] && B[u.host].gateway !== null && B[u.host].gateway !== undefined
+    && u.net.gateway !== B[u.host].gateway).forEach((u) =>
+    add("warn", `<strong>${esc(u.host)}</strong>'s gateway changed since its last backup: ${gwOf(B[u.host].gateway)} → ${gwOf(u.net.gateway)}.`, "fleet", "Fleet"));
+  if (driftRows.length) add("warn", `${driftRows.length} policy setting${driftRows.length === 1 ? "" : "s"} differ: ${driftRows.map((r) => r.kind === "network" ? "Gateway" : esc(r.name)).join(", ")}.`, "fleet", "Fleet");
   clockBad.forEach((u) => add("warn", `<strong>${esc(u.host)}</strong> clock is ${u.offset_s > 0 ? "+" : ""}${u.offset_s} s off.`, "fleet", "Fleet"));
   lowDisk.forEach((u) => add("warn", `<strong>${esc(u.host)}</strong> has ${Math.round(100 * u.disk_free / u.disk_total)}% storage free.`, null, null));
   if (R.update_error) add("warn", `Update check failed: ${esc(R.update_error)}`, null, null);
@@ -537,11 +542,15 @@ $("#ver-run").onclick = async () => {
   state.textContent = "Starting…";
   const es = new EventSource(`/api/jobs/${job.id}/stream`);
   es.addEventListener("progress", (e) => (state.textContent = JSON.parse(e.data).trim()));
-  es.addEventListener("line", (e) => { const l = JSON.parse(e.data); if (!l.startsWith("$ ")) state.textContent = l; });
+  let lastLine = "";
+  es.addEventListener("line", (e) => { const l = JSON.parse(e.data); if (!l.startsWith("$ ") && !l.startsWith("[")) state.textContent = lastLine = l; });
   es.addEventListener("status", async (e) => {
     es.close(); verJob = false;
     const s = JSON.parse(e.data);
-    state.innerHTML = s === "done" ? "Versions checked: every copy is current." : `<span class="warn">Done: see the Render column</span> · <a href="#jobs">log</a>`;
+    // exit 1 means older copies were found (shown in the table) or the check could not run (say why)
+    state.innerHTML = s === "done" ? "Versions checked: every copy is current."
+      : /^(OUTD|FAIL|OK)/.test(lastLine) ? `<span class="warn">Checked: see the Render column</span> · <a href="#jobs">log</a>`
+      : `<span class="bad">${esc(lastLine || "Check failed")}</span> · <a href="#jobs">log</a>`;
     await loadVersions();
   });
 };
@@ -751,19 +760,25 @@ function renderFleet() {
   const verRow = `<tr><td class="pick"></td><td><strong>FPP version</strong><span class="why">Upgrade by building a card</span></td><td>${esc(F.policy.fpp_version)}</td>` +
     on.map((u) => `<td class="cell ${u.version_ok ? "ok" : "odd"}${isPlayer(u.host) ? " player" : ""}" title="${esc(u.version)}">${u.version_ok ? "✓" : esc(u.version)}</td>`).join("") + "<td></td></tr>";
   $("#fleet-match").innerHTML = head(`<th class="pick"><input type="checkbox" id="fleet-pick-all" title="Select every drifting setting"></th><th>Setting</th><th>Expected</th>`) + "<tbody>" + F.match.map((r) => `
-    <tr><td class="pick">${r.drift ? `<input type="checkbox" data-pick="${esc(r.name)}">` : ""}</td><td><strong>${esc(r.name)}</strong><span class="why">${esc(r.why || r.description)}${r.needs ? ` · needs player ${r.needs}` : ""}</span></td>
-      <td>${esc(r.expected === "@master" ? "the player" : shown(r.expected))}${r.player !== null && r.player !== undefined
+    <tr><td class="pick">${r.drift ? `<input type="checkbox" data-pick="${esc(r.name)}">` : ""}</td><td><strong>${r.kind === "network" ? "Gateway" : esc(r.name)}</strong><span class="why">${esc(r.why || r.description)}${r.kind === "network" ? " · applies at the next reboot" : r.needs ? ` · needs player ${r.needs}` : ""}</span></td>
+      <td>${r.kind === "network" ? r.rules.map((x) => `<div class="nowrap">${esc(x.subnet)}.x → ${esc(x.gateway)}</div>`).join("") +
+          (r.inferred && !PREVIEW ? '<button class="small" id="gw-keep" title="Save these rules in fleet-policy.json so they stop following whatever the fleet uses">Keep these rules</button>' : "")
+        : esc(r.expected === "@master" ? "the player" : shown(r.expected))}${r.player !== null && r.player !== undefined
         ? `<span class="sub">player: ${r.player === "*" ? "not checked" : esc(shown(r.player))}</span>` : ""}</td>` +
     hosts.map((h) => {
       const c = r.cells[h] || { status: "n/a" };
       const cls = (c.status === "n/a" ? "na" : c.status) + (isPlayer(h) ? " player" : "");
       const text = c.status === "ok" ? "✓" : c.status === "n/a" ? "n/a" : c.status === "exempt" ? "—" : val(c.value);
       return `<td class="cell ${cls}" title="${esc(h)}: ${esc(shown(c.value))}${c.expected !== undefined && c.expected !== null ? " (expected " + esc(shown(c.expected)) + ")" : ""}"
-        ${c.status === "drift" ? `data-expect="${esc(r.name)}" data-value="${esc(c.value)}"` : ""}>${text}</td>`;
+        ${c.status === "drift" && r.kind !== "network" ? `data-expect="${esc(r.name)}" data-value="${esc(c.value)}"` : ""}>${text}</td>`;
     }).join("") +
     `<td>${r.drift ? `<button class="small primary" data-apply="${esc(r.name)}" ${PREVIEW ? "disabled title=\"Save the policy first\"" : ""}>Apply to ${r.drift}</button>` : ""}</td></tr>`).join("") + verRow + "</tbody>";
 
   document.querySelectorAll("[data-apply]").forEach((b) => (b.onclick = () => runFleetUpdate([b.dataset.apply])));
+  if ($("#gw-keep")) $("#gw-keep").onclick = async () => {
+    if (!confirm("Save these gateway rules in fleet-policy.json?\n\nThis edits the policy only; nothing is sent to the controllers.")) return;
+    try { FLEET = await api("/api/fleet/gateway-rules", {}); PREVIEW = false; renderFleet(); toast("Gateway rules saved in the policy"); } catch (e) { toast(e.message); }
+  };
   const picks = () => [...document.querySelectorAll("input[data-pick]")];
   const syncPicks = () => {
     const n = picks().filter((i) => i.checked).length;
@@ -826,12 +841,13 @@ async function runFleetUpdate(names) {
   const restart = $("#fleet-restart-after").checked;
   const lines = rows.map((r) => `${r.name}:\n` + Object.entries(r.cells).filter(([, c]) => c.status === "drift")
     .map(([h, c]) => `    ${h}: ${shown(c.value)} → ${shown(c.expected)}`).join("\n")).join("\n");
-  const needs = rows.filter((r) => r.needs).map((r) => r.name);
+  const needs = rows.filter((r) => r.needs && r.kind !== "network").map((r) => r.name);
+  const gwNote = rows.some((r) => r.kind === "network") ? "\nGateway: saved now; each controller uses it from its next reboot (nothing is restarted, so a running show is not disturbed)." : "";
   const restartLine = needs.length ? (restart ? `\nAfterwards, restart the players on the affected units (${needs.join(", ")} need it); units that are playing are skipped.`
                                               : `\n${needs.join(", ")} will need a player restart to take effect.`) : "";
-  if (!confirm(`Update ${rows.length} setting(s)? This writes to the controllers.\n\n${lines}\n${restartLine}\n\nEach setting runs in turn; the fleet is rescanned at the end.`)) return;
+  if (!confirm(`Update ${rows.length} setting(s)? This writes to the controllers.\n\n${lines}\n${restartLine}${gwNote}\n\nEach setting runs in turn; the fleet is rescanned at the end.`)) return;
   if (!restart && needs.length) {
-    rows.filter((r) => r.needs).forEach((r) => Object.entries(r.cells).filter(([, c]) => c.status === "drift").forEach(([h]) => pendingRestart.hosts.add(h)));
+    rows.filter((r) => r.needs && r.kind !== "network").forEach((r) => Object.entries(r.cells).filter(([, c]) => c.status === "drift").forEach(([h]) => pendingRestart.hosts.add(h)));
     needs.forEach((n) => pendingRestart.names.add(n));
   }
   let job;

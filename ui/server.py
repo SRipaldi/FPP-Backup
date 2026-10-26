@@ -587,11 +587,19 @@ def act_fleet_apply(body):
     if _fleet["scan"] is None:
         raise ValueError("the fleet has not been scanned yet")
     rep = fleet.evaluate(_fleet["scan"], policy)  # the current policy, not the last report
-    unknown = [n for n in names if n not in policy["match"]]
+    unknown = [n for n in names if n not in policy["match"] and n != fleet.GATEWAY_ROW]
     if not names or unknown:
         raise ValueError(f"not policy settings: {', '.join(unknown) or '(none chosen)'}")
     steps, touched, restart_hosts = [], set(), set()
     for name in names:
+        if name == fleet.GATEWAY_ROW:  # saved now, applies at the next reboot; no player restart
+            row = next((r for r in rep["match"] if r["name"] == name), None)
+            drifted = [h for h, c in row["cells"].items() if c["status"] == "drift"] if row else []
+            if drifted:
+                steps.append([PY, TOOLS / "fleet.py", "--master", CONFIG["master"], "gateway", "policy",
+                              "--hosts", ",".join(drifted)])
+                touched.update(drifted)
+            continue
         s, drifted = fleet_set_steps(name, policy["match"][name], rep)
         steps += s
         touched.update(drifted)
@@ -619,6 +627,8 @@ def act_fleet_expect(body):
         name, value = it.get("setting"), it.get("value")
         if not isinstance(name, str) or not re.match(r"^[\w\-]+$", name) or value is None:
             raise ValueError(f"bad setting: {name!r}")
+        if name == fleet.GATEWAY_ROW:
+            raise ValueError("gateways are set per network: use Keep these rules, or network.gateway in fleet-policy.json")
         value = str(value)
         if len(value) > 200 or "\n" in value:
             raise ValueError(f"bad value for {name}")
@@ -630,6 +640,20 @@ def act_fleet_expect(body):
         rule["value"] = str(it["value"])
         if name in policy["compare"]:
             policy["compare"].remove(name)
+    save_policy(policy)
+    return fleet_report()
+
+
+def act_gateway_rules(body):
+    """Save the gateway rules inferred from the fleet into fleet-policy.json, so
+    they stop following whatever the fleet happens to use. Edits the policy only."""
+    if _fleet["scan"] is None:
+        raise ValueError("the fleet has not been scanned yet")
+    policy = load_policy()
+    rules = fleet.infer_gateway_rules([u for u in _fleet["scan"]["units"] if u["online"]])
+    if not rules:
+        raise ValueError("no gateway is used by more than one controller; add network.gateway by hand")
+    policy["network"] = {"gateway": rules}
     save_policy(policy)
     return fleet_report()
 
@@ -648,15 +672,27 @@ def act_fleet_policy_save(body):
 
 
 def backups_by_host():
-    """Last backup per controller, and the last one that included media."""
+    """Last backup per controller, the last one that included media, and the
+    default gateway it had then (so a gateway lost in an upgrade shows up)."""
     out = {}
-    for sn in snapshots():
+    for sn in snapshots():  # oldest first per host
         b = out.setdefault(sn["host"], {"last": None, "last_media": None, "count": 0})
         b["count"] += 1
         b["last"] = max(b["last"] or "", sn["taken"])
         if sn["media"]:
             b["last_media"] = max(b["last_media"] or "", sn["taken"])
+        b["gateway"] = snapshot_gateway(ROOT / sn["path"])
     return out
+
+
+def snapshot_gateway(path):
+    """The default gateway a snapshot recorded: 10.x's own, else 8.x's per-interface one."""
+    try:
+        net = json.loads((path / "api/network-config.json").read_text())
+    except (OSError, ValueError):
+        return None
+    return (net.get("gateway") or {}).get("GATEWAY") or next(
+        (v["GATEWAY"] for v in net.values() if isinstance(v, dict) and v.get("GATEWAY")), "")
 
 
 def act_inventory(body):
@@ -800,7 +836,7 @@ def act_sequence_versions(body):
 
 ACTIONS = {"snapshot": act_snapshot, "backup": act_backup, "download": act_download, "build": act_build, "flash": act_flash,
            "fleet/apply": act_fleet_apply, "fleet/expect": act_fleet_expect, "fleet/restart": act_fleet_restart,
-           "fleet/preview": act_fleet_preview, "fleet/rescan": act_rescan_unit, "xlights/push": act_xlights_push, "sequences/versions": act_sequence_versions, "fleet/policy": act_fleet_policy_save,
+           "fleet/preview": act_fleet_preview, "fleet/rescan": act_rescan_unit, "fleet/gateway-rules": act_gateway_rules, "xlights/push": act_xlights_push, "sequences/versions": act_sequence_versions, "fleet/policy": act_fleet_policy_save,
            "inventory": act_inventory, "inventory/rebuild": act_inventory_rebuild,
            "settings": act_settings_save, "settings/test": act_settings_test,
            "notifications/read": lambda b: notes_mark(b.get("ids")) or {"ok": True},

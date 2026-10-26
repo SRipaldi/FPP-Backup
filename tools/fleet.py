@@ -10,6 +10,7 @@ Usage:
   tools/fleet.py drift [--json]               # every unit vs config/fleet-policy.json
   tools/fleet.py set ntpServer master --hosts FPP-Side,FPP-Roof
   tools/fleet.py set Latitude <latitude> --hosts all
+  tools/fleet.py gateway policy --hosts FPP-Roof   # save the policy's gateway (applies at next reboot)
   tools/fleet.py restart --hosts all          # fppd only; skips units that are playing
   tools/fleet.py reboot --hosts FPP-Perm
 """
@@ -335,6 +336,12 @@ def validate_policy(policy):
         if rule.get("why"):
             r["why"] = text(rule["why"], f"{name} note")
         match[name] = r
+    gw_rules = []
+    for r in ((policy.get("network") or {}).get("gateway") or []):
+        if not isinstance(r, dict) or not re.match(r"^\d{1,3}(\.\d{1,3}){2}$", str(r.get("subnet", ""))) \
+                or not IPV4_RE.match(str(r.get("gateway", ""))):
+            raise ValueError('network.gateway entries look like {"subnet": "192.168.1", "gateway": "192.168.1.1"}')
+        gw_rules.append({"subnet": r["subnet"], "gateway": r["gateway"]})
     out = {"_comment": policy.get("_comment", ""),
            "fpp_version": text(policy.get("fpp_version", ""), "fpp_version"), "match": match,
            "backup_max_age_days": int(policy.get("backup_max_age_days", 7)),
@@ -342,6 +349,8 @@ def validate_policy(policy):
            "compare": [n for n in names(policy.get("compare", []), "compare") if n not in match],
            "per_unit": names(policy.get("per_unit", []), "per_unit"),
            "secret_pattern": secret.pattern}
+    if gw_rules:
+        out["network"] = {"gateway": gw_rules}
     return out
 
 
@@ -390,8 +399,62 @@ def unit_details(u, audit):
         except Exception:
             pass
         u.update(clock=audit.get("clock"), offset_s=audit.get("offset_s"), status=audit.get("status"))
+        u["net"] = network_info(u)
     u.pop("base", None)
     u["role"] = "player" if u.get("is_master") else "remote"
+
+
+def network_info(u):
+    """Saved default gateway, DNS servers and live IPv4 addresses. 8.x has no
+    gateway endpoint (the gateway is per interface there): gateway is then None."""
+    out = {"gateway": None, "dns": [], "ipv4": []}
+    try:
+        out["gateway"] = fetch_json(f"{u['base']}/api/network/gateway").get("GATEWAY") or ""
+    except Exception:
+        pass
+    try:
+        d = fetch_json(f"{u['base']}/api/network/dns")
+        out["dns"] = [d[k] for k in ("DNS1", "DNS2") if d.get(k)]
+    except Exception:
+        pass
+    try:
+        out["ipv4"] = [a["local"] for i in fetch_json(f"{u['base']}/api/network/interface")
+                       for a in i.get("addr_info", []) if a.get("family") == "inet" and i.get("ifname") != "lo"]
+    except Exception:
+        out["ipv4"] = [a for a in u.get("addresses", []) if IPV4_RE.match(a)]
+    return out
+
+
+IPV4_RE = re.compile(r"^\d{1,3}(\.\d{1,3}){3}$")
+
+
+def subnet_of(ip):
+    return ip.rsplit(".", 1)[0]
+
+
+def gateway_for(u, rules):
+    """The policy's gateway for a unit: the first rule (in order) whose network
+    the unit has an address on. A unit on two networks (wired show network plus
+    Wi-Fi) takes the first listed. None when no rule applies."""
+    nets = {subnet_of(a) for a in (u.get("net") or {}).get("ipv4", [])}
+    return next((r["gateway"] for r in rules if r["subnet"] in nets), None)
+
+
+def infer_gateway_rules(units):
+    """Gateway rules from what the fleet uses now, for a policy that has none:
+    one rule per gateway that more than one unit uses, most-used first (a unit
+    on two networks then gets the gateway most of its peers use)."""
+    counts = {}
+    for u in units:
+        gw = (u.get("net") or {}).get("gateway")
+        if gw and IPV4_RE.match(gw):
+            counts[gw] = counts.get(gw, 0) + 1
+    rules, seen = [], set()
+    for gw, n in sorted(counts.items(), key=lambda kv: -kv[1]):
+        if n > 1 and subnet_of(gw) not in seen:
+            rules.append({"subnet": subnet_of(gw), "gateway": gw})
+            seen.add(subnet_of(gw))
+    return rules
 
 
 def show_status(master):
@@ -608,6 +671,10 @@ def evaluate(scan, policy):
                            "needs": "reboot" if meta.get("reboot") else "restart" if meta.get("restart") else None,
                            "cells": cells, "drift": sum(c["status"] == "drift" for c in cells.values())})
 
+    gw_row = gateway_row(online, policy)
+    if gw_row:
+        match_rows.append(gw_row)
+
     def role_rows(names, kind):
         rows = []
         for name in names:
@@ -642,6 +709,35 @@ def evaluate(scan, policy):
         "other": role_rows([n for n in all_names if n not in known], "other"),
         "per_unit": role_rows([n for n in policy["per_unit"] if any(n in s for s in scans.values())], "per_unit"),
     }
+
+
+GATEWAY_ROW = "gateway"   # the drift row's name; not an FPP setting
+
+
+def gateway_row(online, policy):
+    """The drift row for each unit's default gateway against the policy's
+    per-network rules (inferred from the fleet when the policy has none)."""
+    rules = (policy.get("network") or {}).get("gateway")
+    inferred = not rules
+    if inferred:
+        rules = infer_gateway_rules(online)
+    if not rules:
+        return None
+    cells = {}
+    for u in online:
+        got = (u.get("net") or {}).get("gateway")
+        want = gateway_for(u, rules)
+        if got is None or want is None:
+            cells[u["host"]] = {"value": got, "expected": want, "status": "n/a"}
+        else:
+            cells[u["host"]] = {"value": got, "expected": want, "status": "ok" if got == want else "drift"}
+    expected = "; ".join(f"{r['subnet']}.x → {r['gateway']}" for r in rules)
+    why = ("Default gateway, by the networks each controller is on (first match wins). Needed for internet "
+           "access: plugins, updates. " + ("Inferred from the fleet; add network.gateway to the policy to fix it."
+                                           if inferred else "From network.gateway in the policy."))
+    return {"name": GATEWAY_ROW, "kind": "network", "why": why, "expected": expected, "player": None,
+            "description": "", "needs": "reboot", "rules": rules, "inferred": inferred,
+            "cells": cells, "drift": sum(c["status"] == "drift" for c in cells.values())}
 
 
 def setting_catalog(scan, policy):
@@ -739,6 +835,49 @@ def cmd_set(args):
     sys.exit(1 if failed else 0)
 
 
+def cmd_gateway(args):
+    """Save a default gateway on named units through FPP's network API. FPP
+    writes it to its gateway file; it takes effect when the network is next
+    brought up (a reboot), so a running show is not disturbed."""
+    units = [u for u in discover(args.master, load_inventory()) if u["online"]]
+    wanted = set(args.hosts.split(","))
+    targets = [u for u in units if u["host"] in wanted]
+    missing = wanted - {u["host"] for u in targets}
+    if missing:
+        sys.exit(f"not found or offline: {', '.join(sorted(missing))}")
+    rules = None
+    if args.value == "policy":
+        policy = load_policy() if POLICY.exists() else {}
+        rules = (policy.get("network") or {}).get("gateway")
+        if not rules:
+            for u in units:
+                u["net"] = network_info(u)
+            rules = infer_gateway_rules(units)
+    elif not IPV4_RE.match(args.value):
+        sys.exit("value must be an IPv4 address or 'policy'")
+    failed = 0
+    for u in targets:
+        if rules is not None:
+            u["net"] = u.get("net") or network_info(u)
+            value = gateway_for(u, rules)
+            if not value:
+                print(f"SKIP {u['host']:12} no gateway rule for its networks")
+                continue
+        else:
+            value = args.value
+        try:
+            fetch(f"{u['base']}/api/network/gateway", timeout=30, method="POST",
+                  data=json.dumps({"GATEWAY": value}).encode())
+            got = fetch_json(f"{u['base']}/api/network/gateway").get("GATEWAY")
+            ok = got == value
+            print(f"{'OK  ' if ok else 'FAIL'} {u['host']:12} gateway = {got!r}" + (" (applies at the next reboot)" if ok else ""))
+            failed += not ok
+        except Exception as e:
+            print(f"FAIL {u['host']:12} {e}")
+            failed += 1
+    sys.exit(1 if failed else 0)
+
+
 def cmd_restart(args):
     """Restart fppd (or reboot) on named units, skipping any that are playing."""
     units = [u for u in discover(args.master) if u["online"]]
@@ -785,6 +924,9 @@ def main():
     s.add_argument("value", help='value, or "master" for the player address on each unit\'s subnet')
     s.add_argument("--hosts", required=True, help='comma-separated hostnames, or "all"')
     s.add_argument("--skip-master", action="store_true")
+    g = sub.add_parser("gateway", help="save a default gateway (applies at the next reboot)")
+    g.add_argument("value", help='IPv4 address, or "policy" for each unit\'s gateway from the policy')
+    g.add_argument("--hosts", required=True, help="comma-separated hostnames")
     for name in ("restart", "reboot"):
         r = sub.add_parser(name, help=f"{'restart fppd' if name == 'restart' else 'reboot the OS'} on idle units")
         r.add_argument("--hosts", required=True, help='comma-separated hostnames, or "all"')
@@ -795,7 +937,7 @@ def main():
     if args.cmd == "drift" and not POLICY.exists():
         create_policy(args.master)
         print(f"Created {POLICY.relative_to(ROOT)} from the template using the player's settings.", file=sys.stderr)
-    {"audit": cmd_audit, "drift": cmd_drift, "set": cmd_set, "restart": cmd_restart,
+    {"audit": cmd_audit, "drift": cmd_drift, "set": cmd_set, "gateway": cmd_gateway, "restart": cmd_restart,
      "reboot": cmd_restart}[args.cmd](args)
 
 

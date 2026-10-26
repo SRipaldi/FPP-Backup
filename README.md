@@ -74,12 +74,13 @@ Tick controllers, tick **Media** for the ones whose sequences, music and video y
 ### Fleet Management > Fleet
 Every controller compared with the fleet policy. Red cells differ from the expected value.
 - Tick drifting settings and press **Update checked**: each setting is written to just the controllers that differ, one at a time, then the players that need it are restarted (any that are playing are skipped) and the fleet is rescanned. **Apply** on a row does the same for one setting.
+- **Gateway** is checked too: each controller's default gateway against a rule per network (`172.1.2.x → 172.1.2.1`), first match wins for a controller on two networks. Until you press **Keep these rules** (or add `network.gateway` to the policy), the rules are inferred from what most controllers use. **Apply** saves the gateway through FPP's network API; it takes effect at the controller's next reboot, so a running show isn't disturbed. The Dashboard also flags a gateway that changed since the controller's last backup, which is how one lost in an upgrade shows up.
 - Click a red value to make it the expected one instead, or use **Remotes that disagree** to promote a setting into the policy. These edit the policy only.
 - The Controllers table shows each unit's FPP version, available updates (a newer release, and newer patches on its own branch), clock offset, uptime and storage.
 
 ### Fleet Management > Sequences
 Every sequence that a playlist in the player's schedule plays must be on every controller: a remote plays its own copy and stays dark if it is missing. The page shows what is missing where. Tick the missing ones and press **Push checked**: xLights (running on this computer) uploads each one as FPP Connect would, cut down to the channels that controller drives (v2 zstd sparse); the player also gets the audio. The copy on the controller is then checked against the show folder's render (same render ID and frame count) and the page rescans.
-- **Check versions** finds copies from an older render: it reads the render ID of each scheduled sequence on the controllers you pick (the dropdown: all, or a few) and compares it with the .fseq in the xLights show folder (or the player's copy when xLights isn't running). The **Render** column shows the result per controller, and older copies are listed with a checkbox, ready for **Push checked**. It only reads, and is refused during a show; the whole fleet takes about two minutes.
+- **Check versions** finds copies from an older render: it reads the render ID of each scheduled sequence on the controllers you pick (the dropdown: all, or a few) and compares it with the .fseq in the xLights show folder (or the player's copy when xLights isn't running). The **Render** column shows the result per controller, and older copies are listed with a checkbox, ready for **Push checked**. It only reads; during a show it runs at half pace. The whole fleet takes about two minutes.
 - A tag next to a missing sequence says when xLights can't push it as is: *not in show folder*, *not rendered*, or *render is old* (the .xsq was saved after its last render). Tick **Render first** to render it in xLights before uploading; controllers that already have the sequence keep the old render until they get the new one too.
 - Pushing is refused while the show is playing, and **Render first** is refused while xLights has a sequence open. xLights is busy until the push finishes: don't quit it, or this app, meanwhile.
 - You can still use FPP Connect or FPP's file manager instead; press **Rescan** afterwards. Leave out controllers that aren't in the show by listing them under `coverage_exclude` in the policy.
@@ -114,6 +115,7 @@ tools/snapshot.py [--media] --via <player-ip> <unit-ip>       # back up units (r
 tools/fleet.py audit                                          # time zone, clock offset, NTP, location per unit
 tools/fleet.py drift [--json]                                 # every unit vs the fleet policy
 tools/fleet.py set <Setting> <value|master> --hosts a,b|all   # write one setting (master = the player's address)
+tools/fleet.py gateway <ip|policy> --hosts a,b             # save a default gateway (applies at next reboot)
 tools/fleet.py restart|reboot --hosts a,b|all                 # skips units that are playing
 tools/get_image.py --list | <tag> --platform "BeagleBone Black"
 tools/stage_card.py snapshots/<host>/<ts> work/stage/<host> [--reference snapshots/<unit-on-target-version>/<ts>]
