@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """List and download stock FPP SD images from FalconChristmas/fpp releases.
 
-Downloads <asset>.img.zip into work/images/ and unzips it next to it.
+Downloads <asset>.img.zip into work/images/ and unzips it next to it. The zip
+must match the size and SHA-256 that GitHub publishes for the release asset.
 
 Usage:
   tools/get_image.py --list [--limit 5]
@@ -9,6 +10,7 @@ Usage:
   tools/get_image.py 10.3 --platform "BeagleBone Black"
 """
 import argparse
+import hashlib
 import json
 import sys
 import time
@@ -29,7 +31,8 @@ def releases(limit=5):
         data = json.load(resp)
     return [{"tag": r["tag_name"], "published": r["published_at"],
              "prerelease": r["prerelease"],
-             "assets": [{"name": a["name"], "size": a["size"], "url": a["browser_download_url"]}
+             "assets": [{"name": a["name"], "size": a["size"], "url": a["browser_download_url"],
+                         "sha256": (a.get("digest") or "").removeprefix("sha256:") or None}
                         for a in r["assets"] if a["name"].endswith(".img.zip")]}
             for r in data if not r["draft"]]
 
@@ -46,8 +49,18 @@ def asset_for_platform(platform, variant=""):
     return None
 
 
-def download(url, dest):
+def sha256_of(path):
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for buf in iter(lambda: f.read(CHUNK), b""):
+            h.update(buf)
+    return h.hexdigest()
+
+
+def download(url, dest, size, sha256):
+    """Download to <dest>.part and rename only once size and SHA-256 match."""
     tmp = dest.with_suffix(dest.suffix + ".part")
+    h = hashlib.sha256()
     started, done = time.time(), 0
     with urllib.request.urlopen(url, timeout=60) as resp, open(tmp, "wb") as out:
         total = int(resp.headers.get("Content-Length") or 0)
@@ -56,12 +69,20 @@ def download(url, dest):
             if not buf:
                 break
             out.write(buf)
+            h.update(buf)
             done += len(buf)
             if done % (32 * CHUNK) < CHUNK or done == total:
                 rate = done / max(time.time() - started, 0.001) / 1e6
                 print(f"\r  downloading: {done / 1e6:7.0f} / {total / 1e6:.0f} MB  {rate:5.1f} MB/s",
                       end="", flush=True)
     print()
+    if done != size:
+        tmp.unlink()
+        sys.exit(f"download incomplete: {done} of {size} bytes")
+    if sha256 and h.hexdigest() != sha256:
+        tmp.unlink()
+        sys.exit(f"download does not match the SHA-256 GitHub publishes ({sha256}); discarded")
+    print("  verified: SHA-256 matches the release" if sha256 else "  size matches (the release publishes no SHA-256)")
     tmp.rename(dest)
 
 
@@ -114,11 +135,14 @@ def main():
 
     IMAGES.mkdir(parents=True, exist_ok=True)
     zpath = IMAGES / asset["name"]
-    if zpath.exists() and zpath.stat().st_size == asset["size"]:
-        print(f"already downloaded: {zpath.name}")
+    if not asset["sha256"]:
+        print("warning: GitHub publishes no SHA-256 for this asset; only its size is checked")
+    if zpath.exists() and zpath.stat().st_size == asset["size"] and (
+            not asset["sha256"] or sha256_of(zpath) == asset["sha256"]):
+        print(f"already downloaded and verified: {zpath.name}")
     else:
         print(f"Downloading {asset['name']} ({asset['size'] / 1e6:.0f} MB)")
-        download(asset["url"], zpath)
+        download(asset["url"], zpath, asset["size"], asset["sha256"])
     img = IMAGES / zpath.name.removesuffix(".zip")
     if img.exists():
         print(f"already unzipped: {img.name}")

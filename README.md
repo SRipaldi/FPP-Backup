@@ -25,7 +25,7 @@ Working and in use on an 11-controller show (Raspberry Pi 4, BeagleBone Black wi
 | What | Why | Notes |
 |---|---|---|
 | macOS | flashing SD cards | other OSes can run the UI and backups, not the flash step |
-| Python 3.9+ | everything | the system `python3` is fine; no packages to install |
+| Python 3.9+ | everything | no packages to install. macOS's own `python3` (3.9.6, from the Command Line Tools) works but is past end of life; a current Python (python.org or Homebrew) is better |
 | Network access to your FPP player | everything | the player is the one controller the app talks to directly; others are reached through its `/proxy/` |
 | [Rancher Desktop](https://rancherdesktop.io/) (dockerd / moby engine) | building card images | any Docker engine works; the tools look for Rancher's socket at `~/.rd/docker.sock` |
 | Rust (`cargo`), once | SD card detection | `tools/setup_bb_imager.sh` builds the BeagleBoard Imaging Utility's CLI |
@@ -83,7 +83,8 @@ Every sequence that a playlist in the player's schedule plays must be on every c
 - **Check versions** finds copies from an older render: it reads the render ID of each scheduled sequence on the controllers you pick (the dropdown: all, or a few) and compares it with the .fseq in the xLights show folder (or the player's copy when xLights isn't running). The **Render** column shows the result per controller, and older copies are listed with a checkbox, ready for **Push checked**. It only reads; during a show it runs at half pace. The whole fleet takes about two minutes.
 - A tag next to a missing sequence says when xLights can't push it as is: *not in show folder*, *not rendered*, or *render is old* (the .xsq was saved after its last render). Tick **Render first** to render it in xLights before uploading; controllers that already have the sequence keep the old render until they get the new one too.
 - Pushing is refused while the show is playing, and **Render first** is refused while xLights has a sequence open. xLights is busy until the push finishes: don't quit it, or this app, meanwhile.
-- You can still use FPP Connect or FPP's file manager instead; press **Rescan** afterwards. Leave out controllers that aren't in the show by listing them under `coverage_exclude` in the policy.
+- You can still use FPP Connect or FPP's file manager instead; press **Rescan** afterwards.
+- **Security:** xLights' automation port has no password and listens on every network interface, and it accepts commands (uploads, controller configuration, scripts) from any device on your network and from web pages open in your browser. Turn it on only while pushing, and off afterwards. Leave out controllers that aren't in the show by listing them under `coverage_exclude` in the policy.
 
 ### Show > Live
 While a show plays, every 3 seconds: the player's playlist, sequence and position, and for each remote whether it is playing the same sequence at the same point and how many sync packets per second it receives from the player. Verdicts: *in sync*, *DARK*, *wrong sequence*, *ahead/behind*, *no sync packets*. Positions are whole seconds (FPP's resolution). The **Live updates** switch pauses the polling (remembered in this browser); **Refresh** then reads the show once.
@@ -133,7 +134,7 @@ tools/xlights.py versions --hosts all|a,b                    # render ID of each
 
 - **Reading** is the default. Backups, scans, coverage, the live view and the monitor only use HTTP GET requests that don't change anything.
 - **Writing** to controllers happens only when you ask, after a confirmation: Fleet **Update checked** / **Apply** (through FPP's own settings API), player restarts, and sequence pushes (through xLights). Restarts skip controllers that are playing; pushes wait until the show is not playing.
-- `snapshots/`, `work/` and `config/` are gitignored. Backups contain passwords and Wi-Fi keys: never commit them.
+- `snapshots/`, `work/` and `config/` are gitignored. Backups contain passwords and Wi-Fi keys: never commit them. Backups, staged cards and built images are created readable by your user only.
 - Flashing only targets disks listed as SD cards, refuses anything over 256 GB, requires typing the disk id, and verifies the card afterwards. The stock image is never modified.
 
 ## Troubleshooting

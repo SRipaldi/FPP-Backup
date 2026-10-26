@@ -11,6 +11,12 @@ STOCK=$(cd "$(dirname "$1")" && pwd)/$(basename "$1")
 STAGE=$(cd "$2" && pwd)
 OUT=$(cd "$(dirname "$3")" && pwd)/$(basename "$3")
 
+# The image holds the controller's passwords and Wi-Fi keys: readable by this user only.
+umask 077
+# Pinned to the digest last built with, so a re-pushed tag cannot change what runs
+# as root here; bump it deliberately (docker pull debian:trixie-slim, then inspect).
+BUILDER_IMAGE=${BUILDER_IMAGE:-debian:trixie-slim@sha256:62bd423aeee912639ca8ee681c2b762cb3e25137e0a92b20be455898a9f034ad}
+
 export PATH="$HOME/.rd/bin:$PATH"
 export DOCKER_HOST="${DOCKER_HOST:-unix://$HOME/.rd/docker.sock}"
 
@@ -27,7 +33,7 @@ cp -c "$STOCK" "$OUT"
 
 docker run --rm --privileged \
     -v "$OUT:/img/out.img" -v "$STAGE:/stage:ro" -v "$ROOTFS_SH:/rootfs.sh:ro" \
-    debian:trixie-slim bash -euo pipefail -c '
+    "$BUILDER_IMAGE" bash -euo pipefail -c '
 apt-get -qq update >/dev/null && apt-get -qq install -y fdisk rsync e2fsprogs dosfstools >/dev/null 2>&1
 
 IMG=/img/out.img

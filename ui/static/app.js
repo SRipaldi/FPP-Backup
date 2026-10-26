@@ -14,10 +14,10 @@ const fmtTaken = (t) => t ? t.replace(/^(\d{4})(\d\d)(\d\d)-(\d\d)(\d\d).*/, "$1
 
 async function api(path, body) {
   const opts = body ? { method: "POST", headers: { "Content-Type": "application/json", "X-Token": TOKEN },
-                        body: JSON.stringify(body) } : {};
+                        body: JSON.stringify(body) } : { headers: { "X-Token": TOKEN } };
   const r = await fetch(path, opts);
   // Each server run issues a new token, so a tab left open across a restart is refused.
-  if (r.status === 403 && body) throw new Error("This page is from before the app was restarted: reload the page (⌘R) and try again.");
+  if (r.status === 403) throw new Error("This page is from before the app was restarted: reload the page (⌘R) and try again.");
   const data = await r.json();
   if (!r.ok) throw new Error(data.error || r.statusText);
   return data;
@@ -483,7 +483,8 @@ function renderSequences() {
     (C.excluded?.length ? `<span class="chip">Excluded: ${C.excluded.map(esc).join(", ")}</span>` : "");
   const canPush = !!XL?.ok;
   $("#seq-xl").innerHTML = !XL ? "xLights: checking…" : XL.ok
-    ? `xLights ${esc(XL.version)} · show folder <code>${esc(XL.show)}</code>${XL.open ? ` · open: ${esc(XL.open)}` : ""}`
+    ? `xLights ${esc(XL.version)} · show folder <code>${esc(XL.show)}</code>${XL.open ? ` · open: ${esc(XL.open)}` : ""}` +
+      ` · <span class="warn" title="xLights' automation port takes commands from any device on your network and from web pages in your browser, without a password. Turn it on (Preferences > xFade port: A) only while pushing.">automation port is open: turn it off when you're done</span>`
     : `<span class="warn">xLights not available: ${esc(XL.error)}</span> <button class="small" id="seq-xl-retry">Retry</button>`;
   if ($("#seq-xl-retry")) $("#seq-xl-retry").onclick = loadXlights;
   const nOlder = (C.units || []).reduce((n, u) => n + older(u.host).length, 0);

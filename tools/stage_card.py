@@ -41,6 +41,7 @@ Usage:
 """
 import argparse
 import json
+import os
 import re
 import shlex
 import shutil
@@ -171,8 +172,14 @@ def main():
     args = ap.parse_args()
 
     snap, out = args.snapshot, args.out
+    os.umask(0o077)  # the stage holds passwords and Wi-Fi keys
     manifest, settings = settings_file(snap)
     backup_rel = manifest["fpp_backup_file"]
+    if not re.match(r"^backups/[^/]+\.json$", backup_rel):
+        sys.exit(f"unexpected FPP backup name in the manifest: {backup_rel!r}")
+    # Replaced wholesale on every run, so make sure it is a stage and not some other folder.
+    if out.exists() and any(out.iterdir()) and not (out / "settings").is_file():
+        sys.exit(f"{out} exists and is not a staged card (no settings file); not replacing it")
     if out.exists():
         shutil.rmtree(out)
     out.mkdir(parents=True)

@@ -290,6 +290,8 @@ def act_snapshot(body):
     if not re.match(r"^\d+\.\d+\.\d+\.\d+$", ip):
         raise ValueError("bad ip")
     via = body.get("via")
+    if via and via != CONFIG["master"]:
+        raise ValueError(f"unexpected proxy {via}")
     step = [PY, TOOLS / "snapshot.py"] + (["--media"] if media else [])
     step += ["--via", via, ip] if via else [f"http://{ip}"]
     return start_job("snapshot", f"Snapshot {body.get('host', ip)}" + (" + media" if media else ""), [step])
@@ -330,6 +332,8 @@ def act_build(body):
     stock = safe_rel(body["image"], "work/images")
     m = json.loads((snap / "manifest.json").read_text())
     host = m["host"]
+    if not re.match(r"^[A-Za-z0-9][A-Za-z0-9\-]{0,62}$", host):  # reported by the controller; used in paths
+        raise ValueError(f"snapshot has an invalid hostname: {host[:40]!r}")
     ver = re.search(r"v([\d.]+|nightly)", stock.name)
     ver = ver.group(1) if ver else "custom"
     stage = ROOT / "work/stage" / host
@@ -869,6 +873,13 @@ class Handler(BaseHTTPRequestHandler):
         if not self.local_host():
             return self.send(403, {"error": "local access only"})
         path = self.path.split("?")[0]
+        # API reads need the page's token too: some of them make the app scan every
+        # controller, and another site in the same browser must not be able to trigger
+        # that. Job streams (EventSource cannot send headers) only replay a job's log,
+        # which the browser will not show to another site.
+        if path.startswith("/api/") and not re.match(r"^/api/jobs/\w+/stream$", path) \
+                and self.headers.get("X-Token") != TOKEN:
+            return self.send(403, {"error": "forbidden"})
         try:
             if path == "/":
                 html = (STATIC / "index.html").read_text().replace("__TOKEN__", TOKEN)

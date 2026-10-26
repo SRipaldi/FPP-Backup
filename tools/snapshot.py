@@ -15,6 +15,8 @@ Usage:
 import argparse
 import hashlib
 import json
+import os
+import re
 import sys
 import time
 import urllib.error
@@ -33,6 +35,9 @@ INFO_ENDPOINTS = {
     "playlists.json": "api/playlists",
 }
 FILE_DIRS = ["config", "playlists", "scripts"]
+# FPP hostnames are letters, digits and hyphens. Anything else is not used as a
+# folder name: a device answering on the show network chooses what it reports.
+HOST_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9\-]{0,62}$")
 MEDIA_DIRS = ["sequences", "music", "videos", "images", "effects"]
 
 
@@ -61,16 +66,21 @@ def newest_backup(files):
 def snapshot(base, out_root, media=False):
     info = json.loads(get(base, "api/system/info"))
     host = info.get("HostName", "unknown")
+    if not HOST_RE.match(host):
+        raise ValueError(f"refusing hostname {host[:40]!r}: not a valid FPP hostname")
     stamp = time.strftime("%Y%m%d-%H%M%S")
     out = out_root / host / stamp
-    out.mkdir(parents=True)
+    out.mkdir(parents=True, mode=0o700)
     manifest = {"host": host, "source": base, "taken": stamp,
                 "fpp_version": info.get("Version"), "platform": info.get("Platform"),
                 "variant": info.get("SubPlatform") or info.get("Variant"),
                 "uuid": info.get("uuid"), "files": {}, "errors": []}
 
     def save(rel, blob):
-        p = out / rel
+        # File names come from the controller's listing: never let one escape the snapshot.
+        p = (out / rel).resolve()
+        if not str(p).startswith(str(out.resolve()) + os.sep):
+            raise ValueError(f"refusing file name {rel[:80]!r}: outside the snapshot")
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_bytes(blob)
         manifest["files"][rel] = {"bytes": len(blob),
@@ -139,7 +149,7 @@ def snapshot(base, out_root, media=False):
             print(f"\r  {host} {d}: {i}/{len(wanted)} {name[:60]}", end="", file=sys.stderr, flush=True)
             try:
                 save(f"{d}/{name}", get(base, f"api/file/{d}/{urllib.parse.quote(name)}"))
-            except (urllib.error.URLError, TimeoutError) as e:
+            except (urllib.error.URLError, TimeoutError, ValueError) as e:
                 manifest["errors"].append(f"{d}/{name}: {e}")
 
     print("\r", end="", file=sys.stderr, flush=True)
@@ -156,6 +166,7 @@ def main():
     ap.add_argument("--media", action="store_true",
                     help="also pull sequences, music, videos, images, effects")
     args = ap.parse_args()
+    os.umask(0o077)  # snapshots hold passwords and Wi-Fi keys: readable by this user only
 
     failed = 0
     for t in args.targets:

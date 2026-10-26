@@ -41,7 +41,7 @@ Pure vs network: `fleet.scan_fleet()` talks to controllers (about 30 s); `fleet.
 There is no automated test suite. Verify the way this repo has been verified:
 
 - Syntax: `python3 -c "import ast; ast.parse(open('ui/server.py').read())"` and `node --check ui/static/app.js`.
-- Server: run it on a spare port (`--no-browser --no-monitor --port 8798`), call the endpoint with `curl`; POSTs need the per-run token from the page's `<meta name="token">` in an `X-Token` header, and a local `Host`.
+- Server: run it on a spare port (`--no-browser --no-monitor --port 8798`), call the endpoint with `curl`; every `/api/` request (GET too, except job streams) needs the per-run token from the page's `<meta name="token">` in an `X-Token` header, and a local `Host`.
 - UI: render headless with Chrome (`/Applications/Google Chrome.app/Contents/MacOS/Google Chrome --headless=new --screenshot=...`), or drive it over the DevTools protocol to click things; pages can be opened directly with `#dashboard`, `#fleet`, `#settings` etc. Check dark mode (the owner uses it).
 - To simulate a fresh install, move `config/` aside, run a second server, then put it back. Never leave the owner's `config/` modified.
 - Card builds: build to a file and inspect it read-only in a container; never flash without the user.
@@ -55,6 +55,13 @@ The fleet is a real, running light show.
 - **Everything goes through the player's `/proxy/`.** Its Apache proxy falls over under load: about 30 concurrent requests made healthy units time out and read as offline. Full scans are limited to 3 units x 4 requests; keep new concurrency at or below that. The proxy occasionally returns an empty body: retry (see `fetch_json`).
 - Writes go through FPP's own API (`PUT /api/settings/<name>` applies the setting). FPP 8.x accepts only GET for `system/fppd/restart`; `fleet.py` falls back.
 - Don't start or stop the show, and don't restart players while one is playing (`fleet.py restart` skips playing units).
+
+## Security rules
+
+- **Controllers are untrusted input.** Anything a unit reports (hostname, file names, settings, sequence names) can come from a rogue device on the show network. Hostnames must match `^[A-Za-z0-9][A-Za-z0-9-]{0,62}$` before they become paths; file names from a listing must stay inside the snapshot (`snapshot.py save()`); values that reach a shell script are filtered to safe characters (`stage_card.rootfs_script`); everything shown in the UI goes through `esc()`.
+- **Secrets on disk**: snapshot, stage and build tools set `umask 077`.
+- **Supply chain**: FPP images are checked against the SHA-256 GitHub publishes (`get_image.py`); the build container is pinned by digest (`BUILDER_IMAGE` in `build_image.sh`); bb-imager-cli is built `--locked` from a pinned commit. Bump pins deliberately.
+- **xLights automation port** (49913) has no auth, binds all interfaces and allows any origin; never leave it on in instructions or defaults.
 
 ## FPP facts this code depends on
 
