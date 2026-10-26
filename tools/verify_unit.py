@@ -108,8 +108,9 @@ def main():
     log = get(base, "api/file/logs/fppd.log", timeout=60).decode(errors="replace")
     boots = log.split("Running FPPINIT start")
     last = boots[-1] if len(boots) > 1 else ""
+    # A fresh card logs the first two; an in-place upgrade only gets as far as postNetwork's log.
     check("last fppinit start reached network setup", "Setting max IGMP memberships" in last
-          or "Need to restart/reload" in last,
+          or "Need to restart/reload" in last or "Running FPPINIT postNetwork" in last,
           "" if last else "no fppinit start in log")
 
     print("Settings")
