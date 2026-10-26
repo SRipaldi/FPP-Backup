@@ -117,7 +117,7 @@ def save_inventory(inv, path=INVENTORY):
                                       "controllers": rows}, indent=2) + "\n")
 
 
-def discover(master, inventory=None):
+def discover(master, inventory=None, hosts=None):
     """Every unit the player knows plus every unit in the inventory, verified by
     asking each who it is.
 
@@ -127,7 +127,7 @@ def discover(master, inventory=None):
     player drops a unit from its list once it has been gone a while, so
     inventory addresses are probed too: an expected unit then shows as offline
     instead of vanishing. Each unit gets "expected" (in the inventory or not;
-    None when there is no inventory)."""
+    None when there is no inventory). hosts limits the probing to those names."""
     systems = fetch_json(f"http://{master}/api/fppd/multiSyncSystems", timeout=8).get("systems", [])
     by_host = {}
     for s in systems:
@@ -138,6 +138,8 @@ def discover(master, inventory=None):
         addrs = by_host.setdefault(host, [])
         if c["ip"] not in addrs:
             addrs.insert(0, c["ip"])
+    if hosts is not None:
+        by_host = {h: a for h, a in by_host.items() if h in hosts}
 
     def probe(host, addrs):
         routes = [(a, None) for a in addrs if a == master]
@@ -353,21 +355,8 @@ def scan_fleet(master, check_updates=True):
     with concurrent.futures.ThreadPoolExecutor(3) as ex:
         scans = dict(zip([u["host"] for u in online], ex.map(scan_unit, online)))
         audits = dict(zip([u["host"] for u in online], ex.map(audit_unit, online)))
-    for u in online:
-        try:
-            info = fetch_json(f"{u['base']}/api/system/info")
-            util = info.get("Utilization", {})
-            u.update(os_version=info.get("OSVersion"), uptime=util.get("Uptime"),
-                     branch=info.get("Branch"), git_local=info.get("LocalGitVersion"),
-                     disk_free=(util.get("Disk", {}).get("Media", {}) or {}).get("Free"),
-                     disk_total=(util.get("Disk", {}).get("Media", {}) or {}).get("Total"))
-        except Exception:
-            pass
-        a = audits[u["host"]]
-        u.update(clock=a.get("clock"), offset_s=a.get("offset_s"), status=a.get("status"))
-        u.pop("base", None)
     for u in units:
-        u["role"] = "player" if u.get("is_master") else "remote"
+        unit_details(u, audits.get(u["host"], {}))
     try:
         updates = update_status(units) if check_updates else {}
     except Exception as e:  # GitHub unreachable: report, don't fail the scan
@@ -375,14 +364,7 @@ def scan_fleet(master, check_updates=True):
     for u in units:
         u["update"] = updates.get(u["host"]) if isinstance(updates, dict) else None
     player = next((u for u in units if u.get("is_master") and u["online"]), None)
-    show = None
-    if player:
-        try:
-            st = fetch_json(f"http://{master}/api/fppd/status")
-            show = {"status": st.get("status_name"), "playlist": (st.get("current_playlist") or {}).get("playlist"),
-                    "sequence": st.get("current_sequence"), "next": st.get("next_playlist")}
-        except Exception:
-            pass
+    show = show_status(master) if player else None
     try:
         policy = load_policy()
         coverage = sequence_coverage(master, units, exclude=policy.get("coverage_exclude", []))
@@ -392,6 +374,61 @@ def scan_fleet(master, check_updates=True):
             "releases": updates.get("_releases") if isinstance(updates, dict) else None,
             "update_error": updates.get("error") if isinstance(updates, dict) else None,
             "show": show, "inventory": inventory is not None}
+
+
+def unit_details(u, audit):
+    """Fold system info and the audit (clock, status) into a discovered unit, as
+    the scan's unit rows carry them."""
+    if u["online"]:
+        try:
+            info = fetch_json(f"{u['base']}/api/system/info")
+            util = info.get("Utilization", {})
+            u.update(os_version=info.get("OSVersion"), uptime=util.get("Uptime"),
+                     branch=info.get("Branch"), git_local=info.get("LocalGitVersion"),
+                     disk_free=(util.get("Disk", {}).get("Media", {}) or {}).get("Free"),
+                     disk_total=(util.get("Disk", {}).get("Media", {}) or {}).get("Total"))
+        except Exception:
+            pass
+        u.update(clock=audit.get("clock"), offset_s=audit.get("offset_s"), status=audit.get("status"))
+    u.pop("base", None)
+    u["role"] = "player" if u.get("is_master") else "remote"
+
+
+def show_status(master):
+    try:
+        st = fetch_json(f"http://{master}/api/fppd/status")
+        return {"status": st.get("status_name"), "playlist": (st.get("current_playlist") or {}).get("playlist"),
+                "sequence": st.get("current_sequence"), "next": st.get("next_playlist")}
+    except Exception:
+        return None
+
+
+def scan_one(master, host, check_updates=True):
+    """One controller's part of scan_fleet (unit row, settings, sequence
+    coverage), so a single controller can be rescanned in a few seconds.
+    Read-only."""
+    u = next(iter(discover(master, load_inventory(), hosts={host})), None)
+    if u is None:
+        raise ValueError(f"{host} is not known to the player or the inventory")
+    # Most of the time: FPP answers one setting per request, one at a time (~15 s on a BBB).
+    settings = scan_unit(u) if u["online"] else {}
+    audit = audit_unit(u)
+    coverage = None
+    if u["online"]:
+        try:
+            exclude = load_policy().get("coverage_exclude", []) if POLICY.exists() else []
+            rows = sequence_coverage(master, [u], exclude=exclude)["units"]
+            coverage = rows[0] if rows else None
+        except Exception as e:
+            coverage = {"host": host, "error": str(e)[:80]}
+    unit_details(u, audit)
+    if check_updates and u["online"]:
+        try:
+            u["update"] = update_status([u]).get(host)
+        except Exception:
+            u["update"] = None
+    return {"unit": u, "settings": settings, "coverage": coverage,
+            "show": show_status(master) if u.get("is_master") else None}
 
 
 # ---------------------------------------------------------------- sequences

@@ -68,19 +68,7 @@ async function loadControllers() {
     const { master, controllers } = await api("/api/controllers");
     CONTROLLERS = controllers;
     $("#player").textContent = `player ${master}`;
-    body.innerHTML = controllers.map((c) => {
-      const k = kept.get(c.host) || {};
-      return `
-      <tr class="${c.online ? "" : "offline"}" data-host="${esc(c.host)}">
-        <td class="pick">${c.online ? `<input type="checkbox" data-f="pick" ${k.pick ? "checked" : ""}>` : ""}</td>
-        <td>${statusDot(c)}<strong>${esc(c.host)}</strong><span class="sub">${esc(c.mode || "")}${c.status ? " · " + esc(c.status) : c.online ? "" : "offline"}</span></td>
-        <td>${esc(c.variant || "")}${c.cape ? `<span class="sub">cape ${esc(c.cape)}</span>` : ""}</td>
-        <td>${c.online ? esc(c.version) : '<span class="bad">offline</span>'}</td>
-        <td>${esc(c.ip)}${c.addresses.length > 1 ? `<span class="sub">${esc(c.addresses.filter((a) => a !== c.ip).join(", "))}</span>` : ""}</td>
-        <td>${fmtTaken(c.last_snapshot)}${c.snapshots ? `<span class="sub">${c.snapshots} total</span>` : ""}</td>
-        <td class="pick">${c.online ? `<input type="checkbox" data-f="media" title="Include media for ${esc(c.host)}" ${k.media ? "checked" : ""}>` : ""}</td>
-      </tr>`;
-    }).join("");
+    body.innerHTML = controllers.map((c) => ctlRow(c, kept.get(c.host) || {})).join("");
     body.querySelectorAll("input").forEach((i) => (i.onchange = syncBackupButtons));
   } catch (e) {
     $("#player").textContent = "player unreachable";
@@ -88,6 +76,47 @@ async function loadControllers() {
   }
   syncBackupButtons();
 }
+
+function ctlRow(c, k) {
+  return `
+      <tr class="${c.online ? "" : "offline"}" data-host="${esc(c.host)}">
+        <td class="pick">${c.online ? `<input type="checkbox" data-f="pick" ${k.pick ? "checked" : ""}>` : ""}</td>
+        <td>${statusDot(c)}<span class="nowrap"><strong>${esc(c.host)}</strong>${rescanBtn(c.host, "controllers")}</span><span class="sub">${esc(c.mode || "")}${c.status ? " · " + esc(c.status) : c.online ? "" : "offline"}</span></td>
+        <td>${esc(c.variant || "")}${c.cape ? `<span class="sub">cape ${esc(c.cape)}</span>` : ""}</td>
+        <td>${c.online ? esc(c.version) : '<span class="bad">offline</span>'}</td>
+        <td>${esc(c.ip)}${c.addresses.length > 1 ? `<span class="sub">${esc(c.addresses.filter((a) => a !== c.ip).join(", "))}</span>` : ""}</td>
+        <td>${fmtTaken(c.last_snapshot)}${c.snapshots ? `<span class="sub">${c.snapshots} total</span>` : ""}</td>
+        <td class="pick">${c.online ? `<input type="checkbox" data-f="media" title="Include media for ${esc(c.host)}" ${k.media ? "checked" : ""}>` : ""}</td>
+      </tr>`;
+}
+
+// ↻ next to a controller: rescan just that one (a few seconds instead of the whole fleet).
+const rescanBtn = (host, page) =>
+  `<button class="rescan-one" data-rescan="${esc(host)}" data-page="${page}" title="Rescan ${esc(host)} only" aria-label="Rescan ${esc(host)} only">↻</button>`;
+document.addEventListener("click", async (e) => {
+  const b = e.target.closest("[data-rescan]");
+  if (!b || b.disabled) return;
+  const host = b.dataset.rescan, page = b.dataset.page;
+  b.disabled = true; b.classList.add("busy");
+  try {
+    const r = await api("/api/fleet/rescan", { host, page });
+    if (page === "controllers") {
+      const tr = document.querySelector(`#controllers tr[data-host="${CSS.escape(host)}"]`);
+      const k = tr ? { pick: tr.querySelector("[data-f=pick]")?.checked, media: tr.querySelector("[data-f=media]")?.checked } : {};
+      CONTROLLERS = CONTROLLERS.map((c) => (c.host === host ? r.controller : c));
+      if (tr) { tr.outerHTML = ctlRow(r.controller, k); document.querySelectorAll(`#controllers tr[data-host="${CSS.escape(host)}"] input`).forEach((i) => (i.onchange = syncBackupButtons)); }
+      syncBackupButtons();
+    } else {
+      FLEET = r.report; PREVIEW = false;
+      if (DASH) DASH.report = FLEET;
+      if (page === "dashboard") renderDashboard(); else renderFleet();
+    }
+    toast(`${host} rescanned`);
+  } catch (err) {
+    toast(err.message);
+    b.disabled = false; b.classList.remove("busy");
+  }
+});
 
 const ctlRows = () => [...document.querySelectorAll("#controllers tr[data-host]")].filter((tr) => tr.querySelector("[data-f=pick]"));
 function syncBackupButtons() {
@@ -378,7 +407,7 @@ function renderDashboard() {
       const status = !u.online ? '<span class="tag bad">offline</span>' : u.expected === false ? '<span class="tag warn">unknown</span>'
         : u.status === "playing" ? '<span class="tag info">playing</span>' : `<span class="tag ok">${esc(u.status || "online")}</span>`;
       return `<tr class="${u.online ? "" : "offline"}">
-        <td>${statusDot(u)}<strong>${esc(u.host)}</strong><span class="sub">${esc(u.role || "")} · ${esc(u.ip)}</span></td>
+        <td>${statusDot(u)}<span class="nowrap"><strong>${esc(u.host)}</strong>${rescanBtn(u.host, "dashboard")}</span><span class="sub">${esc(u.role || "")} · ${esc(u.ip)}</span></td>
         <td>${status}</td>
         <td class="${u.online && !u.version_ok ? "bad" : ""}">${esc(u.version || "—")}</td>
         <td>${updateTag(u)}</td>
@@ -701,8 +730,8 @@ function renderFleet() {
   // controllers
   const pct = (u) => u.disk_total ? Math.round(100 * u.disk_free / u.disk_total) + "% free" : "";
   $("#fleet-units").innerHTML = `<thead><tr><th>Controller</th><th>FPP</th><th>Update</th><th>Hardware</th><th>Address</th><th>Clock</th><th>Uptime</th><th>Storage</th></tr></thead><tbody>` +
-    units.map((u) => !u.online ? `<tr class="offline"><td>${statusDot(u)}<strong>${esc(u.host)}</strong></td><td colspan="7">offline · expected at ${esc(u.ip)}</td></tr>` : `
-      <tr><td>${statusDot(u)}<strong>${esc(u.host)}</strong>${u.expected === false ? ' <span class="tag warn">unknown</span>' : ""}<span class="sub">${esc(u.role)}${u.status ? " · " + esc(u.status) : ""}</span></td>
+    units.map((u) => !u.online ? `<tr class="offline"><td>${statusDot(u)}<span class="nowrap"><strong>${esc(u.host)}</strong>${rescanBtn(u.host, "fleet")}</span></td><td colspan="7">offline · expected at ${esc(u.ip)}</td></tr>` : `
+      <tr><td>${statusDot(u)}<span class="nowrap"><strong>${esc(u.host)}</strong>${rescanBtn(u.host, "fleet")}</span>${u.expected === false ? ' <span class="tag warn">unknown</span>' : ""}<span class="sub">${esc(u.role)}${u.status ? " · " + esc(u.status) : ""}</span></td>
         <td class="${u.version_ok ? "" : "bad"}">${esc(u.version)}<span class="sub">${esc(u.os_version || "")}</span></td>
         <td>${updateTag(u)}</td>
         <td>${esc(u.variant || u.platform || "")}${u.cape ? `<span class="sub">cape ${esc(u.cape)}</span>` : ""}</td>

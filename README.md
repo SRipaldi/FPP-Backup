@@ -66,6 +66,8 @@ All of this is saved in `config/` on this computer and is not in Git:
 ### Dashboard
 The landing page. Tiles for controllers online vs expected, policy drift, controllers on the target FPP version, updates available, backups due, sequence coverage and health (clock, storage). **Needs attention** lists what to fix, each with a button to the page that fixes it; unknown controllers can be added to the inventory from here. Also shows the show (playing, or the next scheduled playlist), the latest FPP release, and a status table with a dot per controller (green online, blue playing, red offline).
 
+The **↻** next to a controller's name, on the Dashboard, Fleet and Controllers pages, rescans just that controller: about 15 seconds instead of a minute for the whole fleet (the Controllers page only refreshes its status, in a moment).
+
 ### Backup > Controllers
 Tick controllers, tick **Media** for the ones whose sequences, music and video you also want, then **Back up selected** (or **Back up all**). Each backup is a timestamped folder under `snapshots/<host>/`. Backing up only reads from the controllers. Take a backup with media before rebuilding a controller's card.
 

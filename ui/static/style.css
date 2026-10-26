@@ -220,3 +220,10 @@ details.dropdown .menu { position: absolute; z-index: 20; top: calc(100% + 4px);
   background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; box-shadow: 0 6px 20px rgba(0,0,0,.25); }
 details.dropdown .menu label { display: flex; padding: 3px 0; }
 details.dropdown .menu #ver-hosts { border-top: 1px solid var(--line); margin-top: 4px; padding-top: 4px; }
+
+/* ↻ rescan-one-controller button next to a controller's name */
+button.rescan-one { border: none; background: none; padding: 0 4px; margin-left: 4px; color: var(--muted); font-size: 14px; line-height: 1; cursor: pointer; vertical-align: baseline; }
+button.rescan-one:hover { color: var(--accent); }
+button.rescan-one.busy { color: var(--accent); cursor: default; display: inline-block; animation: spin 1s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.nowrap { white-space: nowrap; }

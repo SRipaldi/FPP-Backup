@@ -34,7 +34,7 @@ tools/get_image.py    FPP release images from GitHub
 tools/xlights.py      pushes sequences to controllers through xLights' automation API (FPP Connect)
 ```
 
-Pure vs network: `fleet.scan_fleet()` talks to controllers (about 30 s); `fleet.evaluate(scan, policy)` is pure and is re-run on every request, so policy edits and previews need no rescan. Keep that split.
+Pure vs network: `fleet.scan_fleet()` talks to controllers (about 30 s); `fleet.evaluate(scan, policy)` is pure and is re-run on every request, so policy edits and previews need no rescan. Keep that split. `fleet.scan_one()` is one unit's part of a scan; the server's `fleet/rescan` action merges it into the cached scan. Reading settings dominates (~15 s per unit): FPP has no bulk read of values and answers one request at a time, so more concurrency does not help.
 
 ## How to check a change
 

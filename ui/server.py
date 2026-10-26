@@ -213,8 +213,8 @@ def snapshots():
     return sorted(out, key=lambda s: (s["host"].lower(), s["taken"]), reverse=False)
 
 
-def controllers():
-    found = fleet.discover(need_player(), fleet.load_inventory())
+def controllers(hosts=None):
+    found = fleet.discover(need_player(), fleet.load_inventory(), hosts=hosts)
     snaps = snapshots()
 
     def status(c):  # playing / idle, for the status dot
@@ -373,6 +373,43 @@ def fleet_report(refresh=False):
         if rescanned:
             scan_notices(prev, _fleet["data"])
         return _fleet["data"]
+
+
+def act_rescan_unit(body):
+    """Rescan one controller (a few seconds instead of a full scan). For the
+    Controllers page, its row there; otherwise its part of the cached fleet scan
+    is replaced and the report re-evaluated (no full scan if none is cached)."""
+    host = str(body.get("host", ""))
+    if not re.match(r"^[\w\-]+$", host):
+        raise ValueError("bad host")
+    if body.get("page") == "controllers":
+        rows = controllers(hosts={host})
+        if not rows:
+            raise ValueError(f"{host} is not known to the player or the inventory")
+        return {"controller": rows[0]}
+    master = need_player()
+    r = fleet.scan_one(master, host, check_updates=fleet.load_settings()["update_check"])
+    with _fleet["lock"]:
+        scan = _fleet["scan"]
+        if scan is None:
+            raise ValueError("no fleet scan yet: press Rescan for the whole fleet first")
+        u = r["unit"]
+        others = [x for x in scan["units"] if x["host"] != host]
+        scan["units"] = sorted(others + [u], key=lambda x: (not x.get("is_master"), x["host"].lower()))
+        if r["settings"]:
+            scan["scans"][host] = r["settings"]
+        else:
+            scan["scans"].pop(host, None)
+        cov = scan.get("coverage")
+        if isinstance(cov, dict) and isinstance(cov.get("units"), list):
+            order = [x["host"] for x in scan["units"]]
+            rows = [x for x in cov["units"] if x["host"] != host] + ([r["coverage"]] if r["coverage"] else [])
+            cov["units"] = sorted(rows, key=lambda x: order.index(x["host"]) if x["host"] in order else 99)
+        if r["show"] is not None:
+            scan["show"] = r["show"]
+        _fleet["data"] = fleet.evaluate(scan, load_policy())
+        _fleet["data"]["policy"]["backup_max_age_days"] = fleet.load_settings()["backup_max_age_days"]
+        return {"report": _fleet["data"]}
 
 
 def scan_notices(prev, rep):
@@ -763,7 +800,7 @@ def act_sequence_versions(body):
 
 ACTIONS = {"snapshot": act_snapshot, "backup": act_backup, "download": act_download, "build": act_build, "flash": act_flash,
            "fleet/apply": act_fleet_apply, "fleet/expect": act_fleet_expect, "fleet/restart": act_fleet_restart,
-           "fleet/preview": act_fleet_preview, "xlights/push": act_xlights_push, "sequences/versions": act_sequence_versions, "fleet/policy": act_fleet_policy_save,
+           "fleet/preview": act_fleet_preview, "fleet/rescan": act_rescan_unit, "xlights/push": act_xlights_push, "sequences/versions": act_sequence_versions, "fleet/policy": act_fleet_policy_save,
            "inventory": act_inventory, "inventory/rebuild": act_inventory_rebuild,
            "settings": act_settings_save, "settings/test": act_settings_test,
            "notifications/read": lambda b: notes_mark(b.get("ids")) or {"ok": True},
