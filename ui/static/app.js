@@ -6,7 +6,7 @@ const gb = (b) => (b / 1e9).toFixed(b < 1e9 ? 2 : 1) + " GB";
 const mb = (b) => (b / 1e6).toFixed(1) + " MB";
 // Status dot used on every page: green online/idle, blue playing, red offline.
 const statusDot = (u) => {
-  const [cls, tip] = !u.online ? ["off", "Offline: not answering"] : u.status === "playing" ? ["play", "Online, playing"]
+  const [cls, tip] = !u.online ? ["off", u.needs_password ? "Answers, but needs its UI password" : "Offline: not answering"] : u.status === "playing" ? ["play", "Online, playing"]
     : ["on", `Online${u.status ? ", " + u.status : ""}`];
   return `<span class="dot ${cls}" title="${tip}" aria-label="${tip}"></span>`;
 };
@@ -81,7 +81,7 @@ function ctlRow(c, k) {
   return `
       <tr class="${c.online ? "" : "offline"}" data-host="${esc(c.host)}">
         <td class="pick">${c.online ? `<input type="checkbox" data-f="pick" ${k.pick ? "checked" : ""}>` : ""}</td>
-        <td>${statusDot(c)}<span class="nowrap"><strong>${esc(c.host)}</strong>${rescanBtn(c.host, "controllers")}</span><span class="sub">${esc(c.mode || "")}${c.status ? " · " + esc(c.status) : c.online ? "" : "offline"}</span></td>
+        <td>${statusDot(c)}<span class="nowrap"><strong>${esc(c.host)}</strong>${rescanBtn(c.host, "controllers")}</span><span class="sub">${esc(c.mode || "")}${c.status ? " · " + esc(c.status) : c.online ? "" : c.needs_password ? "needs password" : "offline"}</span></td>
         <td>${esc(c.variant || "")}${c.cape ? `<span class="sub">cape ${esc(c.cape)}</span>` : ""}</td>
         <td>${c.online ? esc(c.version) : '<span class="bad">offline</span>'}</td>
         <td>${esc(c.ip)}${c.addresses.length > 1 ? `<span class="sub">${esc(c.addresses.filter((a) => a !== c.ip).join(", "))}</span>` : ""}</td>
@@ -367,7 +367,9 @@ function renderDashboard() {
   // needs attention
   const items = [];
   const add = (cls, html, go, label, extra) => items.push({ cls, html, go, label, extra });
-  offline.forEach((u) => add("bad", `<strong>${esc(u.host)}</strong> is offline (expected at ${esc(u.ip)}).`, "controllers", "Controllers",
+  offline.forEach((u) => add("bad", u.needs_password
+      ? `<strong>${esc(u.host)}</strong> answers but needs its UI password (or a different one).`
+      : `<strong>${esc(u.host)}</strong> is offline (expected at ${esc(u.ip)}).`, u.needs_password ? "settings" : "controllers", u.needs_password ? "Passwords" : "Controllers",
     `<button class="small" data-inv-remove="${esc(u.host)}" title="Remove from fleet-inventory.json">Not expected</button>`));
   unknown.forEach((u) => add("warn", `<strong>${esc(u.host)}</strong> (${esc(u.ip)}) answers but isn't in the inventory.`, null, null,
     `<button class="small" data-inv-add="${esc(u.host)}">Add to inventory</button>`));
@@ -654,16 +656,77 @@ async function loadSettings() {
     : "Not created yet. On the first scan it is created from <code>templates/fleet-policy.json</code>, with every value taken from your player's own settings, so your fleet starts out matching its player.";
   $("#set-files").innerHTML = `Settings, inventory and policy are saved in <code>config/</code>: this computer only, not in Git.`;
   $("#set-test-result").textContent = SETTINGS.active_player ? `Active player: ${SETTINGS.active_player}` : "";
+  renderPasswords();
+  $("#set-inv-list").innerHTML = (SETTINGS.controllers || []).map((c) =>
+    `<span class="chip" title="${esc(c.ip)}${c.added === "manually" ? " · added manually" : ""}">${esc(c.host)} <span class="muted small">${esc(c.ip)}</span>` +
+    `<button class="x" data-inv-del="${esc(c.host)}" title="Remove ${esc(c.host)} from the inventory">×</button></span>`).join("");
+  document.querySelectorAll("[data-inv-del]").forEach((b) => (b.onclick = async () => {
+    if (!confirm(`Remove ${b.dataset.invDel} from the inventory?\n\nIt stops being expected; nothing is sent to it.`)) return;
+    try { await api("/api/inventory", { host: b.dataset.invDel, op: "remove", view: "settings" }); DASH = null; FLEET = null; loadSettings(); }
+    catch (e) { toast(e.message); }
+  }));
 }
+
+function renderPasswords() {
+  const P = SETTINGS.passwords || {};
+  const hosts = (SETTINGS.controllers || []).map((c) => c.host);
+  if (!P.keychain) {
+    $("#set-pw-status").innerHTML = '<span class="warn">The macOS Keychain is not available here, so passwords cannot be stored.</span>';
+    return;
+  }
+  const stored = [P.default ? "one for every controller" : "", P.hosts?.length ? `own passwords for ${P.hosts.map(esc).join(", ")}` : ""].filter(Boolean);
+  $("#set-pw-status").innerHTML = `Stored: <strong>${stored.length ? stored.join("; ") : "none"}</strong>`;
+  $("#set-pw-default-remove").disabled = !P.default;
+  const sel = $("#set-pw-host"), prev = sel.value;
+  sel.innerHTML = hosts.length ? hosts.map((h) => `<option value="${esc(h)}">${esc(h)}${P.hosts?.includes(h) ? " (stored)" : ""}</option>`).join("")
+    : '<option value="">no controllers in the inventory</option>';
+  if (hosts.includes(prev)) sel.value = prev;
+  $("#set-pw-one-remove").disabled = !P.hosts?.includes(sel.value);
+  sel.onchange = () => ($("#set-pw-one-remove").disabled = !P.hosts?.includes(sel.value));
+}
+
+async function savePassword(scope, op, input) {
+  const body = { scope, op, host: scope === "host" ? $("#set-pw-host").value : undefined };
+  if (op === "set") {
+    body.password = input.value;
+    if (!body.password) return toast("Enter the password first");
+  } else if (!confirm(`Remove the stored password for ${scope === "default" ? "every controller" : body.host}?`)) return;
+  try {
+    SETTINGS = await api("/api/passwords", body);
+    if (input) input.value = "";
+    toast(op === "set" ? "Password stored in the Keychain" : "Password removed");
+    renderPasswords();
+  } catch (e) { toast(e.message); }
+}
+$("#set-pw-default-save").onclick = () => savePassword("default", "set", $("#set-pw-default"));
+$("#set-pw-default-remove").onclick = () => savePassword("default", "remove");
+$("#set-pw-one-save").onclick = () => savePassword("host", "set", $("#set-pw-one"));
+$("#set-pw-one-remove").onclick = () => savePassword("host", "remove");
+
+$("#set-add").onclick = async () => {
+  const out = $("#set-add-result"), address = $("#set-add-addr").value.trim();
+  if (!address) return toast("Enter the controller's address");
+  out.textContent = "Checking…";
+  try {
+    SETTINGS = await api("/api/inventory/add", { address, password: $("#set-add-pw").value });
+    const a = SETTINGS.added;
+    out.innerHTML = `<span class="good">Added ${esc(a.host)}</span> (${esc(a.address)}), FPP ${esc(a.version)} on ${esc(a.platform)}, mode ${esc(a.mode)}.` +
+      ($("#set-add-pw").value ? " Its password is stored in the Keychain." : "") + " It shows up in the next scan.";
+    $("#set-add-addr").value = $("#set-add-pw").value = "";
+    DASH = null; FLEET = null;
+    loadSettings();
+  } catch (e) { out.innerHTML = `<span class="bad">${esc(e.message)}</span>`; }
+};
 
 $("#set-test").onclick = async () => {
   const out = $("#set-test-result");
   out.textContent = "Testing…";
   try {
-    const r = await api("/api/settings/test", { player: $("#set-player").value.trim() });
+    const r = await api("/api/settings/test", { player: $("#set-player").value.trim(), password: $("#set-test-pw").value });
     out.innerHTML = `<span class="good">Found ${esc(r.host)}</span>, FPP ${esc(r.version)} on ${esc(r.platform)}, mode <strong>${esc(r.mode)}</strong>. ` +
       (r.controllers.length ? `It knows ${r.controllers.length} other controller${r.controllers.length === 1 ? "" : "s"}: ${r.controllers.map(esc).join(", ")}.` : "It doesn't list any other controllers (is MultiSync on?).") +
-      (r.mode !== "player" ? ' <span class="warn">This unit is not in player mode; use the controller that runs the show.</span>' : "");
+      (r.mode !== "player" ? ' <span class="warn">This unit is not in player mode; use the controller that runs the show.</span>' : "") +
+      ($("#set-test-pw").value ? ' The password worked: save it under <strong>Controller passwords</strong> below so the app can use it.' : "");
   } catch (e) { out.innerHTML = `<span class="bad">${esc(e.message)}</span>`; }
 };
 
@@ -759,7 +822,7 @@ function renderFleet() {
   // controllers
   const pct = (u) => u.disk_total ? Math.round(100 * u.disk_free / u.disk_total) + "% free" : "";
   $("#fleet-units").innerHTML = `<thead><tr><th>Controller</th><th>FPP</th><th>Update</th><th>Hardware</th><th>Address</th><th>Clock</th><th>Uptime</th><th>Storage</th></tr></thead><tbody>` +
-    units.map((u) => !u.online ? `<tr class="offline"><td>${statusDot(u)}<span class="nowrap"><strong>${esc(u.host)}</strong>${rescanBtn(u.host, "fleet")}</span></td><td colspan="7">offline · expected at ${esc(u.ip)}</td></tr>` : `
+    units.map((u) => !u.online ? `<tr class="offline"><td>${statusDot(u)}<span class="nowrap"><strong>${esc(u.host)}</strong>${rescanBtn(u.host, "fleet")}</span></td><td colspan="7">${u.needs_password ? '<span class="warn">needs its UI password</span>: add it in Settings' : "offline"} · expected at ${esc(u.ip)}</td></tr>` : `
       <tr><td>${statusDot(u)}<span class="nowrap"><strong>${esc(u.host)}</strong>${rescanBtn(u.host, "fleet")}</span>${u.expected === false ? ' <span class="tag warn">unknown</span>' : ""}<span class="sub">${esc(u.role)}${u.status ? " · " + esc(u.status) : ""}</span></td>
         <td class="${u.version_ok ? "" : "bad"}">${esc(u.version)}<span class="sub">${esc(u.os_version || "")}</span></td>
         <td>${updateTag(u)}</td>

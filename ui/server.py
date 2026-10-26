@@ -40,6 +40,7 @@ PY = sys.executable
 
 sys.path.insert(0, str(TOOLS))
 import fleet  # noqa: E402
+import fpp_http  # noqa: E402
 import get_image  # noqa: E402
 import xlights  # noqa: E402
 
@@ -721,6 +722,9 @@ def act_inventory(body):
         _fleet["scan"]["inventory"] = True
         if op == "remove":
             _fleet["scan"]["units"] = [u for u in _fleet["scan"]["units"] if u["online"] or u["host"] != host]
+    fpp_http.clear_cache()  # its address-to-name mapping changed
+    if body.get("view") == "settings":  # don't make the Settings page wait for a scan
+        return settings_view()
     return fleet_report()
 
 
@@ -743,9 +747,91 @@ def settings_view():
     inv = fleet.load_inventory()
     return {"settings": fleet.load_settings(), "active_player": CONFIG["master"], "from_cli": CONFIG["from_cli"],
             "inventory_count": len((inv or {}).get("controllers", [])), "inventory": inv is not None,
-            "policy": fleet.POLICY.exists(),
+            "policy": fleet.POLICY.exists(), "passwords": passwords_view(inv),
+            "controllers": [{k: c.get(k) for k in ("host", "ip", "role", "added")} for c in (inv or {}).get("controllers", [])],
             "files": {"settings": str(fleet.SETTINGS.relative_to(ROOT)), "inventory": str(fleet.INVENTORY.relative_to(ROOT)),
                       "policy": str(fleet.POLICY.relative_to(ROOT))}}
+
+
+def passwords_view(inv):
+    """Which controller passwords are stored (never the passwords)."""
+    if not fpp_http.available():
+        return {"keychain": False}
+    hosts = [c["host"] for c in (inv or {}).get("controllers", [])]
+    return {"keychain": True, "default": bool(fpp_http.keychain_get("default")),
+            "hosts": [h for h in hosts if fpp_http.keychain_get(f"host:{h}")]}
+
+
+PASSWORD_RE = re.compile(r"^[^\r\n]{1,128}$")
+
+
+def act_passwords(body):
+    """Store or remove a controller UI password in the Keychain: for every
+    controller ("default") or one ("host")."""
+    op, scope, host = body.get("op"), body.get("scope"), str(body.get("host") or "")
+    if op not in ("set", "remove") or scope not in ("default", "host"):
+        raise ValueError("bad request")
+    if scope == "host" and not re.match(r"^[A-Za-z0-9][A-Za-z0-9\-]{0,62}$", host):
+        raise ValueError("pick a controller")
+    account = "default" if scope == "default" else f"host:{host}"
+    if op == "set":
+        pw = str(body.get("password") or "")
+        if not PASSWORD_RE.match(pw):
+            raise ValueError("enter the password (one line, up to 128 characters)")
+        fpp_http.keychain_set(account, pw)
+    else:
+        fpp_http.keychain_delete(account)
+    fpp_http.clear_cache()
+    return settings_view()
+
+
+def probe_fpp(addr, password=None):
+    """system/info from an address: directly, then through the player's proxy.
+    A password given here is tried instead of the stored ones."""
+    pw = password or None
+    errors = []
+    routes = [f"http://{addr}"] + ([f"http://{CONFIG['master']}/proxy/{addr}"]
+                                   if CONFIG["master"] and addr != CONFIG["master"] else [])
+    for base in routes:
+        try:
+            return json.loads(fpp_http.request(f"{base}/api/system/info", timeout=6, password=pw)), base
+        except fpp_http.PasswordRequired as e:
+            errors.append(str(e))
+        except Exception as e:
+            errors.append(f"{base}: {str(e)[:60]}")
+    raise ValueError(next((e for e in errors if "password" in e), None) or f"No FPP answered at {addr} ({errors[0]})")
+
+
+ADDRESS_RE = re.compile(r"^(\d{1,3}(\.\d{1,3}){3}|[A-Za-z0-9]([A-Za-z0-9\-]{0,61}[A-Za-z0-9])?(\.[A-Za-z0-9\-]{1,63})*)$")
+
+
+def act_inventory_add(body):
+    """Add a controller by address (for one the player doesn't list, or a show
+    without a player): it must answer as FPP, directly or through the player.
+    An optional password is checked, then stored in the Keychain for it."""
+    addr = str(body.get("address", "")).strip()
+    if not ADDRESS_RE.match(addr):
+        raise ValueError("enter an IP address or host name")
+    password = str(body.get("password") or "")
+    if password and not PASSWORD_RE.match(password):
+        raise ValueError("password: one line, up to 128 characters")
+    info, _ = probe_fpp(addr, password or None)
+    host = info.get("HostName", "")
+    if not re.match(r"^[A-Za-z0-9][A-Za-z0-9\-]{0,62}$", host):
+        raise ValueError(f"{addr} reports an invalid hostname {host[:40]!r}")
+    inv = fleet.load_inventory() or {"controllers": []}
+    rows = [c for c in inv["controllers"] if c["host"] != host and c["ip"] != addr]
+    rows.append({"host": host, "ip": addr, "role": "player" if addr == CONFIG["master"] else "remote",
+                 "added": "manually"})
+    inv["controllers"] = rows
+    fleet.save_inventory(inv)
+    if password:
+        fpp_http.keychain_set(f"host:{host}", password)
+    fpp_http.clear_cache()
+    with _fleet["lock"]:
+        _fleet.update(scan=None, data=None, t=0)
+    return {**settings_view(), "added": {"host": host, "address": addr, "version": info.get("Version"),
+                                         "platform": info.get("Platform"), "mode": info.get("Mode")}}
 
 
 def act_settings_test(body):
@@ -754,12 +840,16 @@ def act_settings_test(body):
     fleet.validate_settings({"player": addr})
     if not addr:
         raise ValueError("enter an address first")
+    password = str(body.get("password") or "") or None
     try:
-        info = fleet.fetch_json(f"http://{addr}/api/system/info", timeout=6, tries=1)
+        info = json.loads(fpp_http.request(f"http://{addr}/api/system/info", timeout=6, password=password))
+    except fpp_http.PasswordRequired as e:
+        raise ValueError(str(e))
     except Exception as e:
         raise ValueError(f"No FPP answered at {addr} ({str(e)[:60]})")
     try:
-        systems = fleet.fetch_json(f"http://{addr}/api/fppd/multiSyncSystems", timeout=8, tries=1).get("systems", [])
+        systems = json.loads(fpp_http.request(f"http://{addr}/api/fppd/multiSyncSystems", timeout=8,
+                                              password=password)).get("systems", [])
         known = sorted({x.get("hostname") for x in systems if re.match(r"^\d+\.\d+\.\d+\.\d+$", x.get("address", ""))} - {info.get("HostName")})
     except Exception:
         known = []
@@ -842,6 +932,7 @@ ACTIONS = {"snapshot": act_snapshot, "backup": act_backup, "download": act_downl
            "fleet/apply": act_fleet_apply, "fleet/expect": act_fleet_expect, "fleet/restart": act_fleet_restart,
            "fleet/preview": act_fleet_preview, "fleet/rescan": act_rescan_unit, "fleet/gateway-rules": act_gateway_rules, "xlights/push": act_xlights_push, "sequences/versions": act_sequence_versions, "fleet/policy": act_fleet_policy_save,
            "inventory": act_inventory, "inventory/rebuild": act_inventory_rebuild,
+           "inventory/add": act_inventory_add, "passwords": act_passwords,
            "settings": act_settings_save, "settings/test": act_settings_test,
            "notifications/read": lambda b: notes_mark(b.get("ids")) or {"ok": True},
            "notifications/clear": lambda b: notes_mark(clear=True) or {"ok": True}}

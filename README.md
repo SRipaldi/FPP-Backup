@@ -49,9 +49,10 @@ Server options: `--port 8765`, `--no-browser`, `--no-monitor` (no background wat
 The app opens on **Settings** until a player is saved.
 
 1. **Player**: enter the address of the FPP controller that runs your show (the MultiSync player). Press **Test connection**: it shows the player's name, version and mode, and the controllers it knows. Use an address this computer can reach directly. **Save settings.**
-2. **Controller inventory**: press **Build inventory from the player**. This records which controllers should exist, so one that stops answering shows as *offline* (instead of disappearing) and a new one shows as *unknown*.
-3. **Fleet policy**: created automatically on the first scan from `templates/fleet-policy.json`, with every value taken from your player's own settings, so the fleet starts out matching its player. Review it on the same page (see *Settings > Fleet policy* below).
-4. **Monitoring and checks**: background watching on/off and how often, the GitHub update check, and after how many days a backup is "due".
+2. **Controller passwords** (only if FPP's UI password is on): enter one password for every controller, and/or a password for individual controllers. They're stored in this Mac's Keychain (service "FPP-Backup"), never in a file. **Test connection** has its own password field for trying one before saving it. A controller that answers but rejects the password shows as *needs its UI password* instead of offline.
+3. **Controller inventory**: press **Build inventory from the player**. This records which controllers should exist, so one that stops answering shows as *offline* (instead of disappearing) and a new one shows as *unknown*. **Add controller** adds one by address (with its password, if it has one) after checking that FPP answers there, directly or through the player: for a controller the player's MultiSync doesn't list. The × on each controller removes it.
+4. **Fleet policy**: created automatically on the first scan from `templates/fleet-policy.json`, with every value taken from your player's own settings, so the fleet starts out matching its player. Review it on the same page (see *Settings > Fleet policy* below).
+5. **Monitoring and checks**: background watching on/off and how often, the GitHub update check, and after how many days a backup is "due".
 
 All of this is saved in `config/` on this computer and is not in Git:
 

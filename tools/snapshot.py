@@ -27,11 +27,14 @@ import os
 import re
 import sys
 import time
-from datetime import datetime, timedelta
 import urllib.error
 import urllib.parse
 import urllib.request
+from datetime import datetime, timedelta
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import fpp_http  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
 TIMEOUT = 60
@@ -51,9 +54,7 @@ MEDIA_DIRS = ["sequences", "music", "videos", "images", "effects"]
 
 
 def get(base, path):
-    req = urllib.request.Request(f"{base}/{path}", method="GET")
-    with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:
-        return resp.read()
+    return fpp_http.request(f"{base}/{path}", timeout=TIMEOUT)
 
 
 def list_dir(base, d):

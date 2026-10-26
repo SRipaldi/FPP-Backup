@@ -19,6 +19,9 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import fpp_http  # noqa: E402
+
 # Files FPP itself rewrites on a new version or box; compared by presence only.
 REWRITTEN = {"interface.eth0", "interface.wlan0", "interface.wlan1", "gateway", "dns",
              "cape-eeprom.bin", "settings"}
@@ -39,8 +42,7 @@ def check(name, ok, detail=""):
 
 
 def get(base, path, timeout=30):
-    with urllib.request.urlopen(f"{base}/{path}", timeout=timeout) as r:
-        return r.read()
+    return fpp_http.request(f"{base}/{path}", timeout=timeout)
 
 
 def getj(base, path):

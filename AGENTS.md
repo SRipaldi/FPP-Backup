@@ -31,6 +31,7 @@ tools/build_image.sh  writes a stage into a COPY of a stock image in a container
 tools/flash_card.py   writes an image to an SD card via authopen, verifies by read-back
 tools/verify_unit.py  read-only check of a booted unit against its snapshot
 tools/get_image.py    FPP release images from GitHub
+tools/fpp_http.py     every request to a controller: adds the UI password (HTTP Basic, user admin) from the macOS Keychain
 tools/xlights.py      pushes sequences to controllers through xLights' automation API (FPP Connect)
 ```
 
@@ -60,6 +61,7 @@ The fleet is a real, running light show.
 
 - **Controllers are untrusted input.** Anything a unit reports (hostname, file names, settings, sequence names) can come from a rogue device on the show network. Hostnames must match `^[A-Za-z0-9][A-Za-z0-9-]{0,62}$` before they become paths; file names from a listing must stay inside the snapshot (`snapshot.py save()`); values that reach a shell script are filtered to safe characters (`stage_card.rootfs_script`); everything shown in the UI goes through `esc()`.
 - **Secrets on disk**: snapshot, stage and build tools set `umask 077`.
+- **Controller passwords**: only in the Keychain (`fpp_http`, service `FPP-Backup`, accounts `default` and `host:<HostName>`; `FPP_BACKUP_KEYCHAIN` points tests at another service). Never return a password from an endpoint or write one to `config/`. Every controller request must go through `fpp_http.request` (via `fleet.fetch`/`fetch_json`) so it carries the password. Through the player's proxy only one Authorization header is sent: the controller's password, else the default; different player and controller passwords therefore need direct access.
 - **Incremental media** (`snapshot.py`): reused files are hard links into the previous snapshot. Never write into a snapshot after it is taken (that would change older ones too); the reuse rule is same size plus an identical recorded mtime; only for snapshots that recorded none, a listing mtime older than the previous snapshot's start minus 10 minutes (BeagleBones can stamp uploads with a stale date before NTP, so the older-than rule alone is not trusted). Staging copies the files, so builds never write through a link.
 - **Supply chain**: FPP images are checked against the SHA-256 GitHub publishes (`get_image.py`); the build container is pinned by digest (`BUILDER_IMAGE` in `build_image.sh`); bb-imager-cli is built `--locked` from a pinned commit. Bump pins deliberately.
 - **xLights automation port** (49913) has no auth, binds all interfaces and allows any origin; never leave it on in instructions or defaults.

@@ -243,16 +243,45 @@
         <p class="muted small">This app reaches every controller through the player (its <code>/proxy/</code>), and asks it which controllers exist (MultiSync). Use an address this computer can reach.</p>
         <div class="row">
           <input id="set-player" placeholder="e.g. 192.168.1.10 or fpp.local" autocomplete="off" spellcheck="false">
+          <input id="set-test-pw" type="password" placeholder="UI password, if it has one" autocomplete="off">
           <button id="set-test">Test connection</button>
         </div>
         <p id="set-test-result" class="note"></p>
         <p id="set-cli" class="warn small" hidden>This server was started with <code>--master</code>, which overrides the saved player until it is restarted without it.</p>
       </li>
       <li>
+        <h2>Controller passwords <span class="muted small">only if FPP's UI password is on</span></h2>
+        <p class="muted small">If your controllers have a UI password (FPP Settings &gt; UI password), this app needs it to read them. Passwords are kept in this Mac's Keychain, never in a file, and never shown again.</p>
+        <p id="set-pw-status" class="note"></p>
+        <div class="row">
+          <span class="pw-label">Every controller</span>
+          <input id="set-pw-default" type="password" placeholder="password" autocomplete="new-password">
+          <button id="set-pw-default-save">Save</button>
+          <button id="set-pw-default-remove" class="small">Remove</button>
+        </div>
+        <div class="row">
+          <span class="pw-label">One controller</span>
+          <select id="set-pw-host"></select>
+          <input id="set-pw-one" type="password" placeholder="its own password" autocomplete="new-password">
+          <button id="set-pw-one-save">Save</button>
+          <button id="set-pw-one-remove" class="small">Remove</button>
+        </div>
+      </li>
+      <li>
         <h2>Controller inventory <span class="muted small">which controllers should exist</span></h2>
         <p class="muted small">A controller in the inventory that doesn't answer is reported <strong>offline</strong>; one that answers but isn't listed is <strong>unknown</strong>. Build it from what the player can reach now, then add or remove units from the Dashboard as things change.</p>
         <p id="set-inv" class="note"></p>
-        <button id="set-inv-build">Build inventory from the player</button>
+        <div id="set-inv-list" class="chips"></div>
+        <div class="row">
+          <button id="set-inv-build">Build inventory from the player</button>
+        </div>
+        <p class="muted small">Add one the player doesn't list (or every controller, if your show has no player): it must answer as FPP at that address, directly or through the player.</p>
+        <div class="row">
+          <input id="set-add-addr" placeholder="IP address or host name" autocomplete="off" spellcheck="false">
+          <input id="set-add-pw" type="password" placeholder="its UI password, if any" autocomplete="new-password">
+          <button id="set-add">Add controller</button>
+        </div>
+        <p id="set-add-result" class="note"></p>
       </li>
       <li>
         <h2>Fleet policy <span class="muted small">what should match across controllers</span></h2>

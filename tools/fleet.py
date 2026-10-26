@@ -26,6 +26,9 @@ import urllib.request
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import fpp_http  # noqa: E402
+
 ROOT = Path(__file__).resolve().parent.parent
 # Per-installation settings (gitignored): which player is the source of truth,
 # and app behaviour. Edited from the UI's Settings page.
@@ -77,10 +80,9 @@ AUDIT_SETTINGS = ["TimeZone", "ntpServer", "Latitude", "Longitude"]
 
 
 def fetch(url, timeout=6, method="GET", data=None):
-    req = urllib.request.Request(url, method=method, data=data,
-                                 headers={"Content-Type": "text/plain"} if data is not None else {})
-    with urllib.request.urlopen(req, timeout=timeout) as r:
-        return r.read()
+    # Through fpp_http so the controller's UI password, if any, is sent.
+    return fpp_http.request(url, timeout=timeout, method=method, data=data,
+                            headers={"Content-Type": "text/plain"} if data is not None else {})
 
 
 def fetch_json(url, timeout=6, tries=3):
@@ -146,13 +148,17 @@ def discover(master, inventory=None, hosts=None):
         routes = [(a, None) for a in addrs if a == master]
         routes += [(a, master) for a in addrs if a != master]
         routes += [(a, None) for a in addrs if a != master]
+        locked = False
         for a, via in routes:
             base = f"http://{via}/proxy/{a}" if via else f"http://{a}"
             try:
                 # The player's proxy is sometimes slow; one missed reply must not
                 # make an expected unit look offline.
                 info = fetch_json(f"{base}/api/system/info", timeout=6 if via else 3, tries=3)
-            except Exception:
+            except Exception as e:
+                # 401: it answered but wants a (different) UI password; another
+                # route (direct instead of through the player) may still work.
+                locked = locked or fpp_http.needs_password(e)
                 continue
             if info.get("HostName") and info["HostName"] != host:
                 continue
@@ -161,7 +167,8 @@ def discover(master, inventory=None, hosts=None):
                     "platform": info.get("Platform"), "variant": info.get("SubPlatform") or info.get("Variant"),
                     "mode": info.get("Mode"), "cape": (info.get("capeInfo") or {}).get("name"),
                     "is_master": a == master}
-        return {"host": host, "ip": addrs[0], "online": False, "addresses": addrs, "is_master": False}
+        return {"host": host, "ip": addrs[0], "online": False, "addresses": addrs, "is_master": False,
+                "needs_password": locked}
 
     with concurrent.futures.ThreadPoolExecutor(8) as ex:
         units = list(ex.map(lambda kv: probe(*kv), by_host.items()))
