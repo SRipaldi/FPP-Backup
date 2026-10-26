@@ -16,6 +16,8 @@ async function api(path, body) {
   const opts = body ? { method: "POST", headers: { "Content-Type": "application/json", "X-Token": TOKEN },
                         body: JSON.stringify(body) } : {};
   const r = await fetch(path, opts);
+  // Each server run issues a new token, so a tab left open across a restart is refused.
+  if (r.status === 403 && body) throw new Error("This page is from before the app was restarted: reload the page (⌘R) and try again.");
   const data = await r.json();
   if (!r.ok) throw new Error(data.error || r.statusText);
   return data;
