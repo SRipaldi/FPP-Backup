@@ -43,7 +43,7 @@ function showTab(name) {
   if (location.hash !== "#" + name) history.replaceState(null, "", "#" + name);
   document.querySelectorAll("nav button").forEach((b) => b.classList.toggle("active", b.dataset.tab === name));
   document.querySelectorAll("main section").forEach((s) => (s.hidden = s.id !== "tab-" + name));
-  ({ build: loadBuild, flash: loadFlash, jobs: loadJobs, fleet: () => FLEET ? renderFleet() : loadFleet(false),
+  ({ controllers: loadControllers, build: loadBuild, flash: loadFlash, jobs: loadJobs, fleet: () => FLEET ? renderFleet() : loadFleet(false),
      dashboard: () => DASH ? renderDashboard() : loadDashboard(false),
      sequences: () => FLEET ? renderSequences() : loadFleet(false).then(renderSequences),
      show: startLive, settings: loadSettings }[name] || (() => {}))();
@@ -278,7 +278,7 @@ function openJob(id) {
     const s = JSON.parse(e.data);
     prog.innerHTML = `<span class="${s === "done" ? "good" : "bad"}">${s === "done" ? "Finished" : "Failed"}</span>`;
     source.close(); source = null; loadJobs();
-    if (TITLES[id] && TITLES[id].startsWith("Back up")) loadControllers();
+    if (TITLES[id] && TITLES[id].startsWith("Back up")) { loadControllers(); DASH = null; }  // backup ages changed
   });
 }
 
@@ -322,6 +322,9 @@ async function loadDashboard(refresh) {
 $("#dash-refresh").onclick = () => loadDashboard(true);
 
 function renderDashboard() {
+  // One scan for the whole app: the latest report any page fetched (a policy
+  // preview on the Fleet page is not the real state, so it is not shown here).
+  if (!PREVIEW && FLEET) DASH.report = FLEET;
   const R = DASH.report, units = R.units, B = DASH.backups;
   const target = R.policy.fpp_version, maxAge = R.policy.backup_max_age_days || 7;
   const online = units.filter((u) => u.online);
@@ -1036,8 +1039,9 @@ setInterval(() => { if (!$("#tab-jobs").hidden || !$("#jobs-badge").hidden) load
     showTab("settings");
     return;
   }
-  loadControllers();
-  const startTab = location.hash.slice(1);
-  showTab(startTab && document.getElementById("tab-" + startTab) ? startTab : "dashboard");
+  const hash = location.hash.slice(1);
+  const startTab = hash && document.getElementById("tab-" + hash) ? hash : "dashboard";
+  if (startTab !== "controllers") loadControllers();  // fills the header's player; showTab loads it otherwise
+  showTab(startTab);
 })();
 loadJobs();
