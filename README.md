@@ -86,7 +86,7 @@ Every sequence that a playlist in the player's schedule plays must be on every c
 - You can still use FPP Connect or FPP's file manager instead; press **Rescan** afterwards. Leave out controllers that aren't in the show by listing them under `coverage_exclude` in the policy.
 
 ### Show > Live
-While a show plays, every 3 seconds: the player's playlist, sequence and position, and for each remote whether it is playing the same sequence at the same point and how many sync packets per second it receives from the player. Verdicts: *in sync*, *DARK*, *wrong sequence*, *ahead/behind*, *no sync packets*. Positions are whole seconds (FPP's resolution).
+While a show plays, every 3 seconds: the player's playlist, sequence and position, and for each remote whether it is playing the same sequence at the same point and how many sync packets per second it receives from the player. Verdicts: *in sync*, *DARK*, *wrong sequence*, *ahead/behind*, *no sync packets*. Positions are whole seconds (FPP's resolution). The **Live updates** switch pauses the polling (remembered in this browser); **Refresh** then reads the show once.
 
 ### Image Management > Build card
 Pick a backup and an FPP release. The matching stock image (BBB, BB64, Pi64) is chosen from the backup's hardware, and **Download image** fetches it if needed. **Build image** writes the backup into a copy of the stock image inside a container and produces `work/out/<host>-<version>.img`. Building onto a newer version is an offline upgrade: settings are migrated (including 10.x's new setup questions and old time zone names) and FPP's own first boot does the rest.

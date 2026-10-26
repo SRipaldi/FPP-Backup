@@ -571,14 +571,28 @@ $("#seq-push").onclick = () => {
 
 // ------------------------------------------------------------ live show
 let liveTimer = null;
-function startLive() { stopLive(); pollLive(); liveTimer = setInterval(pollLive, 3000); }
+// Polling can be paused (it reads every controller every 3 s); the choice is remembered in this browser.
+const liveWanted = () => $("#live-on").checked;
+try { $("#live-on").checked = localStorage.getItem("live:on") !== "0"; } catch {}
+function startLive() {
+  stopLive();
+  $("#live-once").hidden = liveWanted();
+  pollLive();
+  if (liveWanted()) liveTimer = setInterval(pollLive, 3000);
+}
 function stopLive() { if (liveTimer) clearInterval(liveTimer); liveTimer = null; }
+$("#live-on").onchange = () => {
+  try { localStorage.setItem("live:on", liveWanted() ? "1" : "0"); } catch {}
+  if (liveWanted()) startLive();
+  else { stopLive(); $("#live-once").hidden = false; $("#live-when").textContent = "Paused"; }
+};
+$("#live-once").onclick = pollLive;
 const fmtSec = (n) => n === undefined || n === null ? "" : `${Math.floor(n / 60)}:${String(n % 60).padStart(2, "0")}`;
 
 async function pollLive() {
   let L;
   try { L = await api("/api/show/live"); } catch (e) { $("#live-when").innerHTML = `<span class="bad">${esc(e.message)}</span>`; return; }
-  $("#live-when").textContent = `Updated ${new Date(L.t * 1000).toLocaleTimeString()}`;
+  $("#live-when").textContent = `${liveWanted() ? "Updated" : "Paused · read"} ${new Date(L.t * 1000).toLocaleTimeString()}`;
   const P = L.player || {}, playing = P.status === "playing";
   $("#live-dot").hidden = !playing;
   $("#live-player").innerHTML = !L.player ? '<span class="bad">Player not reachable.</span>' : playing

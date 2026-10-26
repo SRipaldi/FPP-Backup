@@ -227,3 +227,12 @@ button.rescan-one:hover { color: var(--accent); }
 button.rescan-one.busy { color: var(--accent); cursor: default; display: inline-block; animation: spin 1s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 .nowrap { white-space: nowrap; }
+
+/* On/off switch (Live page polling) */
+label.switch { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; font-size: 13px; user-select: none; }
+label.switch input { position: absolute; opacity: 0; width: 0; height: 0; }
+label.switch .track { width: 34px; height: 20px; border-radius: 10px; background: var(--line); position: relative; transition: background .15s; flex: none; }
+label.switch .track::after { content: ""; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: #fff; transition: transform .15s; }
+label.switch input:checked + .track { background: var(--ok); }
+label.switch input:checked + .track::after { transform: translateX(14px); }
+label.switch input:focus-visible + .track { outline: 2px solid var(--accent); outline-offset: 2px; }

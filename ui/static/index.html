@@ -174,7 +174,11 @@
   <section id="tab-show" hidden>
     <div class="bar">
       <h2 class="page-title">Live show</h2>
-      <span id="live-when" class="muted small"></span>
+      <div class="row">
+        <span id="live-when" class="muted small"></span>
+        <button class="small" id="live-once" hidden title="Read the show once">Refresh</button>
+        <label class="switch" title="Poll the player and every remote every 3 seconds"><input type="checkbox" id="live-on" checked><span class="track"></span> Live updates</label>
+      </div>
     </div>
     <p class="muted small">Every 3 seconds: what the player is playing, and whether each remote is playing the same sequence at the same point and receiving the player's sync packets. Positions are whole seconds (that is what FPP reports), so a 1 s difference is normal. Read-only.</p>
     <div id="live-player" class="card live-player"></div>
