@@ -34,8 +34,10 @@ Working and in use on an 11-controller show (Raspberry Pi 4, BeagleBone Black wi
 
 ## Install
 
+Use the [latest release](https://github.com/SRipaldi/FPP-Backup/releases/latest): clone it as below, or download its source zip. `main` has the newest changes and may be mid-way through one.
+
 ```bash
-git clone <this repo> FPP-Backup && cd FPP-Backup
+git clone --branch v0.1.0 https://github.com/SRipaldi/FPP-Backup.git && cd FPP-Backup
 tools/setup_bb_imager.sh          # once: builds bb-imager-cli into work/bin/ (needs cargo)
 python3 ui/server.py              # opens http://127.0.0.1:8765/
 ```
