@@ -49,7 +49,7 @@ function showTab(name) {
      ["dashboard", () => DASH ? renderDashboard() : loadDashboard(false)],
      ["sequences", () => FLEET ? renderSequences() : loadFleet(false).then(renderSequences)],
      ["show", startLive], ["settings", loadSettings]]).get(name);
-  if (load) load();
+  if (typeof load === "function") load();
   if (name !== "show") stopLive();
 }
 document.querySelectorAll("nav button").forEach((b) => (b.onclick = () => showTab(b.dataset.tab)));
