@@ -13,9 +13,9 @@ OUT=$(cd "$(dirname "$3")" && pwd)/$(basename "$3")
 
 # The image holds the controller's passwords and Wi-Fi keys: readable by this user only.
 umask 077
-# Pinned to the digest last built with, so a re-pushed tag cannot change what runs
-# as root here; bump it deliberately (docker pull debian:trixie-slim, then inspect).
-BUILDER_IMAGE=${BUILDER_IMAGE:-debian:trixie-slim@sha256:62bd423aeee912639ca8ee681c2b762cb3e25137e0a92b20be455898a9f034ad}
+# Pinned by digest in tools/builder/Dockerfile's FROM line (Dependabot proposes bumps).
+BUILDER_IMAGE=${BUILDER_IMAGE:-$(sed -n 's/^FROM //p' "$(dirname "$0")/builder/Dockerfile")}
+[[ "$BUILDER_IMAGE" == *@sha256:* ]] || { echo "builder image is not pinned by digest: '$BUILDER_IMAGE'" >&2; exit 1; }
 
 export PATH="$HOME/.rd/bin:$PATH"
 export DOCKER_HOST="${DOCKER_HOST:-unix://$HOME/.rd/docker.sock}"

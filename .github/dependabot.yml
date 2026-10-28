@@ -1,0 +1,12 @@
+# Dependabot opens a PR when a pinned dependency has a newer version.
+# The Python code uses only the standard library and the UI has no JS libraries,
+# so the build container is the one thing it can track. bb-imager (a pinned release
+# built by tools/setup_bb_imager.sh) is outside Dependabot's reach.
+version: 2
+updates:
+  - package-ecosystem: docker
+    directory: /tools/builder
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "Builder image"
