@@ -43,10 +43,12 @@ function showTab(name) {
   if (location.hash !== "#" + name) history.replaceState(null, "", "#" + name);
   document.querySelectorAll("nav button").forEach((b) => b.classList.toggle("active", b.dataset.tab === name));
   document.querySelectorAll("main section").forEach((s) => (s.hidden = s.id !== "tab-" + name));
-  ({ controllers: loadControllers, build: loadBuild, flash: loadFlash, jobs: loadJobs, fleet: () => FLEET ? renderFleet() : loadFleet(false),
+  // name comes from the URL hash: only the page loaders below, never inherited properties
+  const loaders = { controllers: loadControllers, build: loadBuild, flash: loadFlash, jobs: loadJobs, fleet: () => FLEET ? renderFleet() : loadFleet(false),
      dashboard: () => DASH ? renderDashboard() : loadDashboard(false),
      sequences: () => FLEET ? renderSequences() : loadFleet(false).then(renderSequences),
-     show: startLive, settings: loadSettings }[name] || (() => {}))();
+     show: startLive, settings: loadSettings };
+  if (Object.prototype.hasOwnProperty.call(loaders, name)) loaders[name]();
   if (name !== "show") stopLive();
 }
 document.querySelectorAll("nav button").forEach((b) => (b.onclick = () => showTab(b.dataset.tab)));

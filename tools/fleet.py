@@ -17,6 +17,7 @@ Usage:
 import argparse
 import concurrent.futures
 import json
+import os
 import re
 import sys
 import time
@@ -939,6 +940,7 @@ def main():
         r.add_argument("--hosts", required=True, help='comma-separated hostnames, or "all"')
         r.add_argument("--force", action="store_true", help="also units that are playing")
     args = ap.parse_args()
+    os.umask(0o077)  # config/ holds the show's location and addresses; work/ caches: this user only
     if not args.master:
         sys.exit("no player configured: pass --master <ip> or set it on the UI's Settings page")
     if args.cmd == "drift" and not POLICY.exists():

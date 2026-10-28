@@ -1082,6 +1082,7 @@ def main():
     ap.add_argument("--no-browser", action="store_true")
     ap.add_argument("--no-monitor", action="store_true", help="don't watch controllers in the background")
     args = ap.parse_args()
+    os.umask(0o077)  # config/ holds the show's location and addresses; work/ caches: this user only
     CONFIG["from_cli"] = bool(args.master)
     CONFIG["master"] = args.master or fleet.load_settings()["player"] or None
     if not CONFIG["master"]:
