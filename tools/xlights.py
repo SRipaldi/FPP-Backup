@@ -113,16 +113,20 @@ def local_sequence(show, name):
     return out
 
 
-def remote_meta(u, name, wait=60):
-    # FPP answers 404 for a few seconds while it moves a fresh upload into place.
+def remote_meta(u, name, wait=60, want_id=None):
+    # FPP moves a fresh upload into place a few seconds after xLights reports it
+    # sent: until then it answers 404, or still describes the copy being replaced.
+    # With want_id, keep asking until that render shows up (or the wait runs out).
     end = time.time() + wait
     while True:
         try:
-            return fleet.fetch_json(f"{u['base']}/api/sequence/{urllib.parse.quote(name)}/meta", timeout=20)
+            m = fleet.fetch_json(f"{u['base']}/api/sequence/{urllib.parse.quote(name)}/meta", timeout=20)
+            if want_id is None or str(m.get("ID")) == want_id or time.time() > end:
+                return m
         except urllib.error.HTTPError as e:
             if e.code != 404 or time.time() > end:
                 raise
-            time.sleep(3)
+        time.sleep(3)
 
 
 def load_versions():
@@ -300,7 +304,7 @@ def cmd_push(args):
             failed += 1
             continue
         try:
-            m = remote_meta(u, args.name)
+            m = remote_meta(u, args.name, want_id=loc["id"])
         except Exception as e:
             print(f"FAIL {host:12} uploaded in {time.time() - t:.0f} s, but cannot read it back: {e}")
             failed += 1
