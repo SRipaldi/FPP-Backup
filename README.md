@@ -167,7 +167,11 @@ snapshots/                    backups (gitignored; contain secrets)
 work/                         images, staging, builds, caches, logs (gitignored)
 ```
 
-See [AGENTS.md](AGENTS.md) for development and setup notes for AI coding agents, and [FPP-Backup-handoff.md](FPP-Backup-handoff.md) for the original plan.
+See [AGENTS.md](AGENTS.md) for development and setup notes for AI coding agents, and [FPP-Backup-handoff.md](FPP-Backup-handoff.md) for the original plan (historical; much of it changed).
+
+## Contributing and security
+
+Issues and pull requests are welcome; see [CONTRIBUTING.md](CONTRIBUTING.md). Report security problems privately as described in [SECURITY.md](SECURITY.md).
 
 ## License
 

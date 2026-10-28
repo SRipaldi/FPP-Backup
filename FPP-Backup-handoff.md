@@ -1,5 +1,7 @@
 # FPP-Backup: Handoff Document
 
+> **Historical.** This is the plan the project started from (2026-10-23). Much of it changed during the build (for example, backups are local snapshots rather than a Git repo, and secrets use the macOS Keychain directly). README.md and AGENTS.md describe how it works now.
+
 Purpose: carry everything decided so far into a new Claude Code session (VS Code, running on a machine on the owner's LAN) so work continues with no loss of context.
 
 Date of handoff: 2026-10-23
