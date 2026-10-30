@@ -45,6 +45,7 @@
     <details class="nav-group" data-group="show" open>
       <summary>Show</summary>
       <button data-tab="show">Live <span id="live-dot" class="live-dot" hidden></span></button>
+      <button data-tab="colorlight">ColorLight <span id="cl-badge" class="badge warn-badge" hidden></span></button>
     </details>
     <details class="nav-group" data-group="image" open>
       <summary>Image Management</summary>
@@ -186,6 +187,15 @@
     <p class="muted small">Every 3 seconds: what the player is playing, and whether each remote is playing the same sequence at the same point and receiving the player's sync packets. Positions are whole seconds (that is what FPP reports), so a 1 s difference is normal. Read-only.</p>
     <div id="live-player" class="card live-player"></div>
     <div class="table-wrap"><table id="live-units"></table></div>
+  </section>
+
+  <section id="tab-colorlight" hidden>
+    <div class="bar">
+      <h2 class="page-title">ColorLight</h2>
+      <div class="row"><span id="cl-when" class="muted small"></span><button id="cl-refresh">Check now</button></div>
+    </div>
+    <p class="muted small">Every controller that drives a ColorLight receiver card, checked from its own logs every 5 minutes while the app runs: link drops on the card's network port, relinks at 100 Mbps (the card needs gigabit), whether fppd found the card when it last started, card restarts, and slow or failed sends. History is kept for 14 days. Read-only.</p>
+    <div id="cl-units"></div>
   </section>
 
   <section id="tab-build" hidden>

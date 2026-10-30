@@ -6,7 +6,8 @@ Back up, monitor and rebuild the controllers of an [FPP (Falcon Player)](https:/
 - **Keep the fleet consistent**: compare every controller against a policy (time zone, time server, location, privacy, services and anything else you choose) and fix drift in a click.
 - **Check the show will play**: every sequence the schedule uses is on every controller, and during a show each remote is playing the same thing at the same time.
 - **Rebuild or upgrade a controller onto a fresh SD card**: turn a backup into a ready-to-boot card image, on the same or a newer FPP version, flash it and verify it. The card comes up as the old controller (hostname, static address, settings, outputs, sequences) with no setup steps.
-- **Get told when something changes**: controllers going offline, remotes dark during a show, failed jobs, drift, missing sequences, new FPP releases.
+- **Watch ColorLight receiver cards**: link drops, relinks at 100 Mbps, a card fppd didn't find at start, card restarts, read from each controller's own logs.
+- **Get told when something changes**: controllers going offline, remotes dark during a show, ColorLight link trouble, failed jobs, drift, missing sequences, new FPP releases.
 
 Everything runs locally: a small web UI in your browser and the command-line tools behind it.
 
@@ -92,6 +93,9 @@ Every sequence that a playlist in the player's schedule plays must be on every c
 ### Show > Live
 While a show plays, every 3 seconds: the player's playlist, sequence and position, and for each remote whether it is playing the same sequence at the same point and how many sync packets per second it receives from the player. Verdicts: *in sync*, *DARK*, *wrong sequence*, *ahead/behind*, *no sync packets*. Positions are whole seconds (FPP's resolution). The **Live updates** switch pauses the polling (remembered in this browser); **Refresh** then reads the show once.
 
+### Show > ColorLight
+Every controller with an enabled ColorLight output (an LED panel matrix of type ColorLight), checked every 5 minutes while the app runs, from the newest lines of its syslog and fppd.log. Per card: whether the link is up and at what speed (the card needs gigabit; a relink at 100 Mbps means a damaged pair, jack or cable), whether fppd found the receiver when it last started (it only looks then, so a start during a link drop leaves the panel dark until fppd restarts), how long the link has been steady, drops in the last hour, day and week, when the card last powered on (from its own uptime), and slow, failed or dropped frames. Charts show drops per day and by hour of day: drops that cluster in the warm part of the day point at heat on a connector. History is kept in `work/cache/colorlight.json` for 14 days, so it outlasts the controller's log rotation. Problems also appear on the Dashboard and in the bell. **Check now** reads every controller at once.
+
 ### Image Management > Build card
 Pick a backup and an FPP release. The matching stock image (BBB, BB64, Pi64) is chosen from the backup's hardware, and **Download image** fetches it if needed. **Build image** writes the backup into a copy of the stock image inside a container and produces `work/out/<host>-<version>.img`. Building onto a newer version is an offline upgrade: settings are migrated (including 10.x's new setup questions and old time zone names) and FPP's own first boot does the rest.
 
@@ -108,7 +112,7 @@ python3 tools/verify_unit.py snapshots/<host>/<ts> --via <player-ip> <unit-ip> -
 What should match across the fleet. For each setting: the expected value (suggestions show what the fleet has), the player's own value or *not checked* when the player should differ, aliases to accept, and a note. Also the lists of settings compared only among remotes, and settings that differ by design (shown, never flagged). **Preview** shows which controllers would drift under your changes before you **Save**.
 
 ### Notifications
-The bell in the header counts unread notifications. While the UI runs, a background monitor watches for controllers going offline or coming back (after two missed checks), the show starting and stopping, and remotes that are dark during the show. Scans add new drift, missing sequences and new FPP releases; jobs add their results.
+The bell in the header counts unread notifications. While the UI runs, a background monitor watches for controllers going offline or coming back (after two missed checks), the show starting and stopping, remotes that are dark during the show, and ColorLight link trouble (each kind at most once every 1 to 24 hours, by severity). Scans add new drift, missing sequences and new FPP releases; jobs add their results.
 
 ## Command line
 
@@ -129,6 +133,7 @@ tools/verify_unit.py snapshots/<host>/<ts> --via <player-ip> <unit-ip> [--stage 
 tools/xlights.py status [<name>.fseq ...]                    # xLights version, show folder (read-only)
 tools/xlights.py push <name>.fseq --hosts a,b [--render]      # upload through xLights, verify
 tools/xlights.py versions --hosts all|a,b                    # render ID of each copy vs the show folder (read-only)
+tools/colorlight.py [--host <name>]                           # ColorLight link and receiver health (read-only)
 ```
 
 `fleet.py` uses the player saved in `config/settings.json` unless given `--master`.

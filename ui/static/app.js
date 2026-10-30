@@ -48,7 +48,7 @@ function showTab(name) {
      ["fleet", () => FLEET ? renderFleet() : loadFleet(false)],
      ["dashboard", () => DASH ? renderDashboard() : loadDashboard(false)],
      ["sequences", () => FLEET ? renderSequences() : loadFleet(false).then(renderSequences)],
-     ["show", startLive], ["settings", loadSettings]]).get(name);
+     ["show", startLive], ["colorlight", () => loadColorlight(false)], ["settings", loadSettings]]).get(name);
   if (typeof load === "function") load();
   if (name !== "show") stopLive();
 }
@@ -345,6 +345,8 @@ function renderDashboard() {
   const lowDisk = online.filter((u) => u.disk_total && u.disk_free / u.disk_total < 0.15);
   const covGaps = (R.coverage?.units || []).filter((u) => u.missing?.length);
   const seqMissing = covGaps.reduce((n, u) => n + u.missing.length, 0);
+  const CL = DASH.colorlight?.units || [];
+  clBadge(CL);
   $("#seq-badge").hidden = !seqMissing; $("#seq-badge").textContent = seqMissing;
   $("#dash-when").textContent = `Scanned ${new Date(R.scanned * 1000).toLocaleTimeString()}`;
 
@@ -364,6 +366,9 @@ function renderDashboard() {
          covGaps.length ? `on ${covGaps.map((u) => esc(u.host)).join(", ")}` : R.coverage?.needed ? `${R.coverage.needed} sequences on every controller` : esc(R.coverage?.error || "")),
     tile("fleet", clockBad.length || lowDisk.length ? "warn" : "", "Health", clockBad.length + lowDisk.length || "ok",
          `${clockBad.length} clock · ${lowDisk.length} low storage`),
+    CL.length ? tile("colorlight", CL.some((u) => u.level === "bad") ? "bad" : CL.some((u) => u.level === "warn") ? "warn" : "", "ColorLight",
+         CL.some((u) => u.level === "bad") ? "problem" : CL.some((u) => u.level === "warn") ? "needs a look" : "steady",
+         CL.map((u) => `${esc(u.host)}: ${u.outputs.map((o) => o.drops_24h).reduce((a, b) => a + b, 0)} drops in 24 h`).join(" · ")) : "",
   ].join("");
   document.querySelectorAll(".tile[data-go]").forEach((t) => (t.onclick = () => showTab(t.dataset.go)));
 
@@ -394,6 +399,7 @@ function renderDashboard() {
   if (driftRows.length) add("warn", `${driftRows.length} policy setting${driftRows.length === 1 ? "" : "s"} differ: ${driftRows.map((r) => r.kind === "network" ? "Gateway" : esc(r.name)).join(", ")}.`, "fleet", "Fleet");
   clockBad.forEach((u) => add("warn", `<strong>${esc(u.host)}</strong> clock is ${u.offset_s > 0 ? "+" : ""}${u.offset_s} s off.`, "fleet", "Fleet"));
   lowDisk.forEach((u) => add("warn", `<strong>${esc(u.host)}</strong> has ${Math.round(100 * u.disk_free / u.disk_total)}% storage free.`, null, null));
+  CL.forEach((u) => u.issues.filter((i) => i.code !== "offline").forEach((i) => add(i.level, esc(i.text), "colorlight", "ColorLight")));
   if (R.update_error) add("warn", `Update check failed: ${esc(R.update_error)}`, null, null);
   if (!R.inventory) add("warn", "No fleet-inventory.json yet, so offline controllers can't be detected.", null, null);
   $("#dash-attention").innerHTML = items.length ? items.map((it) => `<li class="${it.cls}"><span>${it.html}</span><span class="row">${it.extra || ""}${it.go ? `<button class="small go" data-go="${it.go}">${it.label} →</button>` : ""}</span></li>`).join("")
@@ -633,6 +639,87 @@ async function pollLive() {
         <td class="${playing && u.sync_rate === 0 ? "warn" : ""}">${u.sync_rate ?? ""}${u.sync_errors ? ` <span class="bad">(${u.sync_errors} err)</span>` : ""}</td>
         <td class="muted small">${esc((u.last_sync || "").replace(/^\d{4}-\d\d-\d\d /, ""))}</td></tr>`;
     }).join("") + "</tbody>";
+}
+
+// ------------------------------------------------------------ colorlight
+const fmtTime = (t) => t ? new Date(t * 1000).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : "";
+function span(s) {
+  s = Math.max(0, Math.round(s));
+  return s < 90 ? `${s} s` : s < 5400 ? `${Math.round(s / 60)} min` : s < 172800 ? `${Math.round(s / 3600)} h` : `${Math.round(s / 86400)} days`;
+}
+function clBadge(units) {
+  const n = units.filter((u) => u.level !== "ok").length;
+  $("#cl-badge").hidden = !n; $("#cl-badge").textContent = n;
+}
+async function loadColorlight(refresh) {
+  $("#cl-when").textContent = refresh ? "Reading the controllers' logs…" : "Loading…";
+  $("#cl-refresh").disabled = true;
+  try {
+    renderColorlight(await api("/api/colorlight" + (refresh ? "?refresh=1" : "")));
+  } catch (e) {
+    $("#cl-when").innerHTML = `<span class="bad">${esc(e.message)}</span>`;
+  } finally { $("#cl-refresh").disabled = false; }
+}
+$("#cl-refresh").onclick = () => loadColorlight(true);
+
+// One series per chart (link drops), so bars wear the accent and the title names it.
+function clBars(values, label, tip) {
+  const max = Math.max(1, ...values.filter((v) => v !== null));
+  return `<div class="cl-chart" role="img" aria-label="${esc(label)}">` + values.map((v, i) => v === null
+    ? `<span class="cl-bar none" title="${esc(tip(i, null))}"></span>`
+    : `<span class="cl-bar" title="${esc(tip(i, v))}"><span style="height:${v ? Math.max(4, Math.round(100 * v / max)) : 0}%"></span></span>`).join("") + "</div>";
+}
+
+function renderColorlight(C) {
+  $("#cl-when").textContent = C.checked ? `Checked ${new Date(C.checked * 1000).toLocaleTimeString()}` : "";
+  clBadge(C.units);
+  if (!C.units.length) {
+    $("#cl-units").innerHTML = `<div class="card muted">No controller has an enabled ColorLight output${C.scanned_units ? ` (${C.scanned_units} checked)` : ""}.</div>`;
+    return;
+  }
+  const now = C.now;
+  $("#cl-units").innerHTML = C.units.map((u) => {
+    const tagFor = { ok: '<span class="tag ok">healthy</span>', warn: '<span class="tag warn">needs a look</span>', bad: '<span class="tag bad">problem</span>' };
+    const issues = u.issues.length ? `<ul class="attention">${u.issues.map((i) => `<li class="${i.level}"><span>${esc(i.text)}</span></li>`).join("")}</ul>` : "";
+    return u.outputs.map((o) => {
+      const stat = (k, v, sub, cls) => `<div class="cl-stat ${cls || ""}"><span class="k">${k}</span><span class="v">${v}</span><span class="s">${sub || ""}</span></div>`;
+      const link = o.link_up === false ? stat("Link now", "Down", "no carrier on " + esc(o.interface), "bad")
+        : stat("Link now", o.speed ? (o.speed >= 1000 ? `${o.speed / 1000} Gbps` : `${o.speed} Mbps`) : "Up", o.speed && o.speed < 1000 ? "the card needs gigabit" : o.link_up ? "carrier up" : "", o.speed && o.speed < 1000 ? "bad" : "");
+      const r = o.receiver || {};
+      const recv = o.no_receiver ? stat("Receiver", "Not found", `when fppd started ${fmtTime(o.last_start)}`, "bad")
+        : stat("Receiver", o.receivers ? `${o.receivers} found` : "?", [r.fw, r.size].filter(Boolean).map(esc).join(" · "));
+      const clean = o.last_drop ? stat("Steady for", span(now - o.last_drop), `last drop ${fmtTime(o.last_drop)}`, now - o.last_drop < 3600 ? "bad" : now - o.last_drop < 86400 ? "warn" : "")
+        : stat("Steady for", o.history_from ? span(now - o.history_from) + "+" : "?", "no drops in the history");
+      const drops = stat("Link drops", `${o.drops_1h} · ${o.drops_24h} · ${o.drops_7d}`, "last hour · 24 h · 7 days", o.drops_1h ? "bad" : o.drops_24h ? "warn" : "");
+      const slow = stat("100 Mbps relinks", o.slow_24h, "last 24 h", o.slow_24h ? "warn" : "");
+      const power = stat("Card powered on", o.card_power_on ? span(now - o.card_power_on) + " ago" : "?",
+        o.card_restarts.length ? `${o.card_restarts.length} restart${o.card_restarts.length > 1 ? "s" : ""} in 7 days` : "from its uptime at the last search", o.card_restarts.some((t) => t > now - 86400) ? "warn" : "");
+      const c = o.counts;
+      const sends = stat("Sends (24 h)", c.framedrop ? `${c.framedrop} dropped` : c.senderr + c.slowsend ? `${c.senderr + c.slowsend} slow/failed` : "clean",
+        c.framedrop || c.senderr + c.slowsend ? `${c.senderr} failed · ${c.slowsend} slow · ${c.framedrop} frames dropped` : "", c.framedrop || c.senderr + c.slowsend ? "warn" : "");
+      const days = o.days.length;
+      const dayTip = (i, v) => { const d = new Date((now - (days - 1 - i) * 86400) * 1000); return `${d.toLocaleDateString([], { month: "short", day: "numeric" })}: ${v === null ? "no log from this day" : `${v} drop${v === 1 ? "" : "s"}`}`; };
+      const hourTip = (i, v) => `${String(i).padStart(2, "0")}:00–${String(i).padStart(2, "0")}:59: ${v} drop${v === 1 ? "" : "s"}`;
+      const recent = o.recent.length ? `<div class="table-wrap"><table><thead><tr><th>Dropped</th><th>Down for</th><th>Came back at</th></tr></thead><tbody>` +
+        o.recent.map((d) => `<tr><td>${fmtTime(d.t)}</td><td>${d.back ? span(d.back - d.t) : '<span class="bad">still down</span>'}</td>
+          <td class="${d.mbps && d.mbps < 1000 ? "bad" : ""}">${d.mbps ? (d.mbps >= 1000 ? d.mbps / 1000 + " Gbps" : d.mbps + " Mbps") : d.back ? "?" : ""}</td></tr>`).join("") + "</tbody></table></div>" : "";
+      return `<div class="card cl-unit">
+        <div class="bar"><h2>${esc(u.host)} <span class="muted small">${esc(u.ip || "")} · ${esc(o.interface)} · ${esc(o.type || "ColorLight")}</span></h2>
+          ${u.online === false ? '<span class="tag bad">offline</span>' : tagFor[u.level]}</div>
+        ${issues}
+        <div class="cl-stats">${link}${recv}${clean}${drops}${slow}${power}${sends}</div>
+        <div class="cl-charts">
+          <div><h3>Link drops per day <span class="muted small">(${days} days)</span></h3>${clBars(o.days, "Link drops per day", dayTip)}
+            <div class="cl-axis"><span>${days - 1} days ago</span><span>today</span></div></div>
+          <div><h3>Link drops by hour of day <span class="muted small">(last 7 days, controller's time)</span></h3>${clBars(o.hours, "Link drops by hour of day", hourTip)}
+            <div class="cl-axis"><span>0:00</span><span>6:00</span><span>12:00</span><span>18:00</span><span>23:00</span></div></div>
+        </div>
+        ${recent ? `<h3>Recent drops</h3>${recent}` : ""}
+        <p class="muted small">Link history from ${fmtTime(o.history_from)} (older days are hatched: no log). Output setting “disable when the link is down”: ${o.link_check ? "on" : "off"}.
+          fppd only looks for the card when it starts: after fixing a link, restart fppd if the receiver shows as not found.</p>
+      </div>`;
+    }).join("");
+  }).join("");
 }
 
 // ------------------------------------------------------------ settings

@@ -33,6 +33,8 @@ tools/verify_unit.py  read-only check of a booted unit against its snapshot
 tools/get_image.py    FPP release images from GitHub
 tools/fpp_http.py     every request to a controller: adds the UI password (HTTP Basic, user admin) from the macOS Keychain
 tools/xlights.py      pushes sequences to controllers through xLights' automation API (FPP Connect)
+tools/colorlight.py   ColorLight receiver health from each controller's syslog/fppd.log tails; history in
+                      work/cache/colorlight.json; the monitor checks it every 5 min (Show > ColorLight)
 ```
 
 Pure vs network: `fleet.scan_fleet()` talks to controllers (about 30 s); `fleet.evaluate(scan, policy)` is pure and is re-run on every request, so policy edits and previews need no rescan. Keep that split. `fleet.scan_one()` is one unit's part of a scan; the server's `fleet/rescan` action merges it into the cached scan. Reading settings dominates (~15 s per unit): FPP has no bulk read of values and answers one request at a time, so more concurrency does not help.
@@ -76,6 +78,8 @@ The fleet is a real, running light show.
 - **Gateway in the fleet scan**: `network_info()` reads `/api/network/gateway`, `/dns` and the interface list; `gateway_row()` adds a drift row named `gateway` (kind `network`, not an FPP setting) from `policy.network.gateway` rules, or rules inferred from the fleet. `POST /api/network/gateway` only saves the file; it applies when the network next comes up. An in-place 8.5→10.3 upgrade dropped the per-interface gateway on two units.
 - **Network**: 10.x moves `GATEWAY` from `interface.*` into `config/gateway` and applies it to every static interface. 10.x hides `interface.*` and `.htpasswd` from `/api/files/config`; read network config from `/api/network/interface/<if>`.
 - **Restart**: settings such as `TimeZone`, `Latitude`, `Locale` only take effect after an fppd restart (schema `restart: 2`).
+- **Logs**: `GET /api/file/Logs/var/log/syslog?tail=N` (capital `L`; also `Logs/fppd.log`) returns the last N lines, so a check reads only what is new. Rotated `syslog.1` is plain text on 10.x, older ones are compressed.
+- **ColorLight**: outputs are `LEDPanelMatrix` entries with `subType` `ColorLight5a75` in `/api/channel/output/channelOutputsJSON`. fppd searches for receivers only when it starts. The API has no link speed (`/api/network/interface` has carrier only); the speed comes from the kernel's "Link is Up - 1Gbps/Full" lines. A down/up pair under a second apart is the boot-time reset, not a drop.
 - **Status**: `/api/fppd/status` positions are whole seconds; `/api/fppd/multiSyncStats` on a remote counts sync packets from the player.
 
 ## xLights automation

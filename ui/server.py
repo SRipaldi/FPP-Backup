@@ -39,6 +39,7 @@ OUT = ROOT / "work/out"
 PY = sys.executable
 
 sys.path.insert(0, str(TOOLS))
+import colorlight  # noqa: E402
 import fleet  # noqa: E402
 import fpp_http  # noqa: E402
 import get_image  # noqa: E402
@@ -489,7 +490,8 @@ def live_status():
 
 def monitor_loop():
     """Background watch while the UI server runs: offline/online changes, show
-    start/stop, and remotes that are dark while the show plays. Follows the
+    start/stop, remotes that are dark while the show plays, and ColorLight links
+    (every few minutes, see tools/colorlight.py). Follows the
     Settings page (on/off, interval) and does nothing until a player is set."""
     while True:
         st = fleet.load_settings()
@@ -521,6 +523,7 @@ def monitor_loop():
                 if u["online"] and u.get("expected") is False:
                     notify("warn", f"{u['host']} ({u['ip']}) answers but isn't in the inventory", "dashboard", key=f"unknown:{u['host']}", quiet_s=86400)
             _mon["online"] = online
+            colorlight_notices(colorlight.report(colorlight.check(units, CONFIG["master"])))
             live = live_status()
             pl = live["player"] or {}
             playing = pl.get("status") == "playing"
@@ -539,6 +542,35 @@ def monitor_loop():
         except Exception as e:
             sys.stderr.write(f"monitor: {e}\n")
         time.sleep(interval)
+
+
+# ColorLight problems worth a notification, and how long to stay quiet about
+# each once notified, read or not (the check repeats every few minutes and the
+# problem persists): a flapping link is re-announced hourly.
+CL_QUIET = {"down": 3 * 3600, "slow": 3 * 3600, "noreceiver": 3 * 3600, "warning": 3 * 3600, "flapping": 3600,
+            "drops": 12 * 3600, "restart": 86400, "framedrop": 12 * 3600, "send": 12 * 3600}
+_cl_level, _cl_sent = {}, {}
+
+
+def colorlight_notices(rep):
+    now = time.time()
+    for u in rep["units"]:
+        for i in u["issues"]:
+            key = f"cl:{u['host']}:{i['code']}"
+            if i["code"] in CL_QUIET and now - _cl_sent.get(key, 0) >= CL_QUIET[i["code"]]:
+                notify(i["level"], i["text"], "colorlight", key=key, quiet_s=CL_QUIET[i["code"]])
+                _cl_sent[key] = now
+        if u["level"] == "ok" and _cl_level.get(u["host"]) == "bad":
+            notify("ok", f"{u['host']}: ColorLight link is steady again", "colorlight", key=f"cl:{u['host']}:ok", quiet_s=600)
+        _cl_level[u["host"]] = u["level"]
+
+
+def colorlight_view(refresh=False):
+    """The ColorLight page: checks controllers that are due (all of them with
+    refresh), using the cached fleet scan's units when there is one."""
+    scan = _fleet["scan"]
+    units = scan["units"] if scan else fleet.discover(need_player(), fleet.load_inventory())
+    return colorlight.report(colorlight.check(units, need_player(), force=refresh))
 
 
 def load_policy():
@@ -1006,11 +1038,14 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/api/notifications":
                 items = sorted(_notes["items"], key=lambda n: -n["t"])
                 return self.send(200, {"unread": sum(not n["read"] for n in items), "items": items[:60]})
+            if path == "/api/colorlight":
+                return self.send(200, colorlight_view(refresh="refresh=1" in self.path))
             if path == "/api/show/live":
                 return self.send(200, live_status())
             if path == "/api/dashboard":
                 return self.send(200, {"report": fleet_report(refresh="refresh=1" in self.path),
-                                       "backups": backups_by_host(), "now": time.time()})
+                                       "backups": backups_by_host(), "colorlight": colorlight.report(),
+                                       "now": time.time()})
             if path == "/api/fleet/policy":
                 policy = load_policy()
                 return self.send(200, {"policy": policy, "catalog": fleet.setting_catalog(_fleet["scan"], policy)
