@@ -271,10 +271,20 @@ function openJob(id) {
   document.querySelectorAll("#jobs-list li").forEach((li) => li.classList.toggle("selected", li.dataset.id === id));
   $("#log-title").textContent = TITLES[id] || "Job";
   source = new EventSource(`/api/jobs/${id}/stream`);
-  source.addEventListener("line", (e) => {
+  // Lines are drawn in batches and only the last MAX_LOG are kept: rebuilding the
+  // text for every line of a 50,000-line job froze the tab.
+  const MAX_LOG = 5000;
+  let lines = [], dropped = 0, pending = false;
+  const draw = () => {
+    pending = false;
     const atEnd = log.scrollTop + log.clientHeight >= log.scrollHeight - 4;
-    log.textContent += JSON.parse(e.data) + "\n";
+    if (lines.length > MAX_LOG) { dropped += lines.length - MAX_LOG; lines = lines.slice(-MAX_LOG); }
+    log.textContent = (dropped ? `[${dropped} earlier lines not shown]\n` : "") + lines.join("\n") + "\n";
     if (atEnd) log.scrollTop = log.scrollHeight;
+  };
+  source.addEventListener("line", (e) => {
+    lines.push(JSON.parse(e.data));
+    if (!pending) { pending = true; requestAnimationFrame(draw); }
   });
   source.addEventListener("progress", (e) => (prog.textContent = JSON.parse(e.data)));
   source.addEventListener("status", (e) => {
@@ -641,6 +651,152 @@ async function pollLive() {
     }).join("") + "</tbody>";
 }
 
+// ------------------------------------------------------------ in-place upgrade
+// A dialog that asks, in order: which controllers, what kind of upgrade (with the
+// recommendation the release notes support), and whether to back up first.
+let UPG = null;
+const upgPicked = new Set();
+let upgKind = null, upgBackup = "first";
+const UPG_KIND = {
+  fpp: ["FPP update", "FPP fetches the release from GitHub and rebuilds itself on the controller, then reboots. Keeps the operating system it has."],
+  os: ["OS upgrade", "The controller downloads the release's OS image and replaces its whole system, which comes with the new FPP already built in, then reboots. Longer; sometimes the final reboot needs a power cycle."],
+};
+function mins(s) { const m = Math.round(s / 60); return m < 90 ? `${m} min` : `${Math.floor(m / 60)} h ${m % 60} min`; }
+const upgReady = (u) => !u.blockers.length;
+// A controller that can't reach GitHub only has the OS image from this Mac, whatever is chosen.
+const upgMethod = (u) => u.method === "os-push" ? "os-push" : u.method === "os" || upgKind === "os" ? "os" : "fpp";
+const upgMinutes = (u) => upgMethod(u) === "fpp" ? u.minutes : Math.max(u.minutes, 40);
+
+async function openUpgrade(refresh, pick) {
+  const d = $("#upg-dialog");
+  if (!d.open) d.showModal();
+  $("#upg-when").textContent = "Checking the controllers (about 30 seconds)…";
+  $("#upg-go").disabled = $("#upg-dry").disabled = true;
+  try {
+    UPG = await api("/api/upgrade/plan" + (refresh ? "?refresh=1" : ""));
+  } catch (e) {
+    $("#upg-when").innerHTML = `<span class="bad">${esc(e.message)}</span>`;
+    return;
+  }
+  if (pick) {
+    upgPicked.clear();
+    UPG.units.filter((u) => upgReady(u) && (pick === "all" || u.host === pick)).forEach((u) => upgPicked.add(u.host));
+    upgKind = null;
+    upgBackup = "first";
+  }
+  renderUpgrade(pick && pick !== "all" ? pick : null);
+}
+$("#upg-open").onclick = () => openUpgrade(false, "all");
+$("#upg-refresh").onclick = () => openUpgrade(true);
+$("#upg-cancel").onclick = () => $("#upg-dialog").close();
+
+function renderUpgrade(single) {
+  const R = UPG.release, A = R.os, S = UPG.show;
+  const picks = UPG.units.filter((u) => upgPicked.has(u.host));
+  $("#upg-title").textContent = picks.length === 1 ? `Upgrade ${picks[0].host} to FPP ${R.tag}` : `Upgrade to FPP ${R.tag}`;
+  $("#upg-when").textContent = `Checked ${new Date(UPG.checked * 1000).toLocaleTimeString()}`;
+  $("#upg-notes").innerHTML = `Released ${new Date(R.published).toLocaleDateString()}. ${esc(R.notes_head)} <a href="${esc(R.url)}" target="_blank" rel="noopener">Release notes ↗</a>`;
+  $("#upg-show").innerHTML = S.playing ? '<span class="bad">The show is playing: upgrades wait until it stops.</span>'
+    : S.next_in_s ? `Show idle. Next: <strong>${esc(S.next || "")}</strong> in ${mins(S.next_in_s)}. A controller isn't started unless it can finish 15 minutes before that.` : "Show idle; nothing scheduled.";
+
+  // 1. controllers: the one clicked, or every one that can be upgraded; blocked ones listed with the reason
+  const rows = single ? UPG.units.filter((u) => u.host === single || upgPicked.has(u.host)) : UPG.units;
+  $("#upg-units").innerHTML = `<thead><tr><th class="pick"></th><th>Controller</th><th>Now</th><th>Last backup</th><th>Notes</th></tr></thead><tbody>` +
+    rows.map((u) => {
+      const bk = u.backup_age_h === null || u.backup_age_h === undefined ? '<span class="warn">never</span>'
+        : `<span class="${u.backup_due ? "warn" : ""}">${u.backup_age_h < 1 ? "under an hour" : u.backup_age_h < 48 ? Math.round(u.backup_age_h) + " h" : Math.round(u.backup_age_h / 24) + " days"} ago</span>`;
+      const notes = upgReady(u) ? [u.method === "os-push" ? "can't reach GitHub: gets the OS image from this Mac" : "", u.colorlight ? "ColorLight receiver checked afterwards" : "", ...(u.notes || [])]
+        : [u.blockers.join("; ")];
+      return `<tr class="${upgReady(u) ? "" : "offline"}"><td class="pick"><input type="checkbox" data-upg="${esc(u.host)}" ${upgReady(u) ? "" : "disabled"} ${upgPicked.has(u.host) ? "checked" : ""}></td>
+        <td><strong>${esc(u.host)}</strong><span class="sub">${esc(u.role || "")}${u.platform ? " · " + esc(u.platform) : ""}</span></td>
+        <td>${esc(u.version || "")}<span class="sub">${u.os_level ? "OS " + esc(u.os_level) + " · " + esc(u.arch || "") : ""}</span></td>
+        <td>${u.online ? bk : ""}</td>
+        <td class="small">${notes.filter(Boolean).map(esc).join("<br>")}</td></tr>`;
+    }).join("") + "</tbody>";
+  $("#upg-units").querySelectorAll("[data-upg]").forEach((c) => (c.onchange = () => { c.checked ? upgPicked.add(c.dataset.upg) : upgPicked.delete(c.dataset.upg); renderUpgrade(single); }));
+
+  // 2. kind of upgrade, recommended from the release notes
+  const required = A.required === true || picks.some((u) => u.method === "os");
+  const noImage = picks.filter((u) => !u.fppos);
+  const rec = required ? "os" : "fpp";
+  if (!upgKind || (required && upgKind === "fpp") || (noImage.length && upgKind === "os" && !required)) upgKind = rec;
+  const off = (k) => (required && k === "fpp") || (!required && k === "os" && noImage.length > 0);
+  const why = {
+    fpp: A.required === false ? `The ${esc(R.tag)} release notes say the OS level (${esc(A.from || "")} → ${esc(A.level || "")}) is optional: kernel updates and security patches, nothing ${esc(R.tag)} needs. The FPP update is quicker and keeps the system you have; do the OS level after the season, or with a fresh card.`
+      : "The smaller change: the release notes don't say an OS upgrade is needed.",
+    os: !required && noImage.length ? `Not available: ${esc(R.tag)} has no OS image for ${noImage.map((u) => esc(u.host)).join(", ")}.` : required ? `Required: ${A.required === true ? `the release notes say ${esc(R.tag)} needs OS level ${esc(A.level || "")}` : "a new major version needs the OS upgrade"}.`
+      : `Optional${A.level ? ` (OS level ${esc(A.level)}: kernel and security patches)` : ""}. The image already contains FPP ${esc(R.tag)}, so no separate FPP update follows.`,
+  };
+  $("#upg-kind").innerHTML = ["fpp", "os"].map((k) => `<label class="${off(k) ? "offline" : ""}"><input type="radio" name="upg-kind" value="${k}" ${upgKind === k ? "checked" : ""} ${off(k) ? "disabled" : ""}>
+      <span><strong>${UPG_KIND[k][0]}</strong>${k === rec ? ' <span class="tag ok">recommended</span>' : ""}<span class="sub">${why[k]}</span><span class="sub muted">${UPG_KIND[k][1]}</span></span></label>`).join("") +
+    (A.note ? `<details><summary class="small">What the release notes say</summary><p class="small muted">${esc(A.note)}</p></details>` : "");
+  $("#upg-kind").querySelectorAll("input").forEach((r) => (r.onchange = () => { upgKind = r.value; renderUpgrade(single); }));
+
+  // 3. backup, only when a picked controller has none from the last 24 hours
+  const due = picks.filter((u) => u.backup_due);
+  $("#upg-backup-q").hidden = !due.length;
+  $("#upg-backup").innerHTML = due.length ? `<p class="small" style="margin:0 0 4px">${due.map((u) => `<strong>${esc(u.host)}</strong>`).join(", ")} ${due.length === 1 ? "has" : "have"} no backup from the last 24 hours. A backup is what a new card would be built from if an upgrade goes wrong.</p>` +
+    [["first", "Back up first", "Recommended: about a minute each, configuration only."], ["skip", "Upgrade without a fresh backup", ""]].map(([v, t, sub]) =>
+      `<label><input type="radio" name="upg-backup" value="${v}" ${upgBackup === v ? "checked" : ""}><span><strong>${t}</strong>${sub ? `<span class="sub">${sub}</span>` : ""}</span></label>`).join("") : "";
+  $("#upg-backup").querySelectorAll("input").forEach((r) => (r.onchange = () => (upgBackup = r.value)));
+
+  const total = picks.reduce((n, u) => n + upgMinutes(u), 0) + (upgBackup === "first" ? due.length * 2 : 0);
+  $("#upg-summary").innerHTML = !picks.length ? "Tick at least one controller." :
+    `<strong>${picks.length} controller${picks.length > 1 ? "s" : ""}, one at a time${picks.some((u) => u.role === "player") ? ", the player last" : ""}:</strong> ` +
+    picks.map((u) => `${esc(u.host)} (${upgMethod(u) === "os-push" ? "OS image from this Mac" : UPG_KIND[upgMethod(u)][0]}, ~${upgMinutes(u)} min)`).join(", ") +
+    `. About ${mins(total * 60)} in all. The run stops at the first problem, and each controller is compared afterwards with its state just before: version, outputs, sequences, playlists, network, settings, warnings${picks.some((u) => u.colorlight) ? ", ColorLight receiver" : ""}. <strong>This writes to the controllers.</strong>`;
+  $("#upg-go").disabled = $("#upg-dry").disabled = !picks.length || !!S.playing;
+  $("#upg-go").textContent = picks.length > 1 ? `Start upgrade (${picks.length})` : "Start upgrade";
+}
+
+function startUpgrade(dry) {
+  const picks = UPG.units.filter((u) => upgPicked.has(u.host));
+  const backup = dry || upgBackup !== "first" ? [] : picks.filter((u) => u.backup_due).map((u) => u.host);
+  $("#upg-dialog").close();
+  act("/api/upgrade", { hosts: picks.map((u) => u.host), os: upgKind === "os", backup, target: UPG.release.tag, dry_run: dry });
+}
+$("#upg-go").onclick = () => startUpgrade(false);
+$("#upg-dry").onclick = () => startUpgrade(true);
+
+// ------------------------------------------------------------ old OS images
+let IMG = null;
+const imgPicked = new Set();
+const gbs = (b) => (b / 1e9).toFixed(1) + " GB";
+$("#img-open").onclick = async () => {
+  $("#img-dialog").showModal();
+  $("#img-when").textContent = "Reading each controller's Uploads folder…";
+  $("#img-units").innerHTML = "";
+  $("#img-go").disabled = true;
+  try { IMG = await api("/api/upgrade/images"); } catch (e) { $("#img-when").innerHTML = `<span class="bad">${esc(e.message)}</span>`; return; }
+  imgPicked.clear();
+  IMG.units.filter((u) => u.images.length && !u.busy).forEach((u) => imgPicked.add(u.host));
+  renderImages();
+};
+$("#img-cancel").onclick = () => $("#img-dialog").close();
+function renderImages() {
+  $("#img-when").textContent = `Checked ${new Date(IMG.checked * 1000).toLocaleTimeString()}`;
+  const rows = IMG.units.filter((u) => u.images.length || u.error);
+  $("#img-units").innerHTML = !rows.length ? '<tbody><tr><td class="muted">No OS images left on any controller.</td></tr></tbody>' :
+    `<thead><tr><th class="pick"></th><th>Controller</th><th>Images</th><th>Size</th></tr></thead><tbody>` + rows.map((u) => {
+      const ok = u.images.length && !u.busy;
+      return `<tr class="${ok ? "" : "offline"}"><td class="pick"><input type="checkbox" data-img="${esc(u.host)}" ${ok ? "" : "disabled"} ${imgPicked.has(u.host) ? "checked" : ""}></td>
+        <td><strong>${esc(u.host)}</strong>${u.busy ? '<span class="sub warn">an update is running</span>' : ""}${u.error ? `<span class="sub bad">${esc(u.error)}</span>` : ""}</td>
+        <td class="small">${u.images.map((i) => esc(i.name)).join("<br>")}</td>
+        <td>${gbs(u.images.reduce((n, i) => n + i.size, 0))}</td></tr>`;
+    }).join("") + "</tbody>";
+  $("#img-units").querySelectorAll("[data-img]").forEach((c) => (c.onchange = () => { c.checked ? imgPicked.add(c.dataset.img) : imgPicked.delete(c.dataset.img); renderImages(); }));
+  const picked = IMG.units.filter((u) => imgPicked.has(u.host));
+  const size = picked.reduce((n, u) => n + u.images.reduce((m, i) => m + i.size, 0), 0);
+  $("#img-total").textContent = picked.length ? `${picked.reduce((n, u) => n + u.images.length, 0)} images on ${picked.length} controller${picked.length > 1 ? "s" : ""}: ${gbs(size)}` : "";
+  $("#img-go").disabled = !picked.length;
+  $("#img-go").textContent = picked.length ? `Delete ${gbs(size)}` : "Delete";
+}
+$("#img-go").onclick = () => {
+  const hosts = [...imgPicked];
+  $("#img-dialog").close();
+  act("/api/upgrade/cleanup", { hosts });
+};
+
 // ------------------------------------------------------------ colorlight
 const fmtTime = (t) => t ? new Date(t * 1000).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : "";
 function span(s) {
@@ -905,6 +1061,9 @@ function renderFleet() {
     chip(clockBad.length, "clocks off by more than 2 s", clockBad.length),
     chip(disagree.length, "settings remotes disagree on", disagree.length),
   ].join("");
+  const newer = on.filter((u) => u.update?.release_newer);
+  $("#upg-open").hidden = !newer.length;
+  if (newer.length) $("#upg-open").textContent = `Upgrade all to ${newer[0].update.latest_release}…`;
   const badge = $("#fleet-badge");
   badge.hidden = !(driftRows.length + oldVer.length + clockBad.length);
   badge.textContent = driftRows.length + oldVer.length + clockBad.length;
@@ -915,11 +1074,12 @@ function renderFleet() {
     units.map((u) => !u.online ? `<tr class="offline"><td>${statusDot(u)}<span class="nowrap"><strong>${esc(u.host)}</strong>${rescanBtn(u.host, "fleet")}</span></td><td colspan="7">${u.needs_password ? '<span class="warn">needs its UI password</span>: add it in Settings' : "offline"} · expected at ${esc(u.ip)}</td></tr>` : `
       <tr><td>${statusDot(u)}<span class="nowrap"><strong>${esc(u.host)}</strong>${rescanBtn(u.host, "fleet")}</span>${u.expected === false ? ' <span class="tag warn">unknown</span>' : ""}<span class="sub">${esc(u.role)}${u.status ? " · " + esc(u.status) : ""}</span></td>
         <td class="${u.version_ok ? "" : "bad"}">${esc(u.version)}<span class="sub">${esc(u.os_version || "")}</span></td>
-        <td>${updateTag(u)}</td>
+        <td>${updateTag(u)}${u.update?.release_newer ? `<span class="sub"><button class="small" data-upg-one="${esc(u.host)}" title="Upgrade just this controller in place">Upgrade…</button></span>` : ""}</td>
         <td>${esc(u.variant || u.platform || "")}${u.cape ? `<span class="sub">cape ${esc(u.cape)}</span>` : ""}</td>
         <td>${esc(u.ip)}${u.via ? `<span class="sub">via player</span>` : ""}</td>
         <td class="${u.offset_s !== null && Math.abs(u.offset_s) > 2 ? "bad" : ""}">${u.offset_s === null ? "?" : (u.offset_s > 0 ? "+" : "") + u.offset_s + " s"}<span class="sub">${esc((u.clock || "").replace(/^\w+ /, "").replace(/ \d{4}$/, ""))}</span></td>
         <td>${esc(u.uptime || "")}</td><td>${pct(u)}</td></tr>`).join("") + "</tbody>";
+  $("#fleet-units").querySelectorAll("[data-upg-one]").forEach((b) => (b.onclick = () => openUpgrade(false, b.dataset.upgOne)));
 
   const head = (first) => `<thead><tr>${first}${hosts.map((h) => `<th class="unit${h === master?.host ? " player" : ""}" title="${esc(h)}${h === master?.host ? " (player)" : ""}"><span class="vlabel">${esc(shortHost(h))}${h === master?.host ? " ★" : ""}</span></th>`).join("")}<th></th></tr></thead>`;
   const isPlayer = (h) => h === master?.host;
@@ -927,7 +1087,7 @@ function renderFleet() {
   $("#fleet-preview-banner").hidden = !PREVIEW;
 
   // policy settings
-  const verRow = `<tr><td class="pick"></td><td><strong>FPP version</strong><span class="why">Upgrade by building a card</span></td><td>${esc(F.policy.fpp_version)}</td>` +
+  const verRow = `<tr><td class="pick"></td><td><strong>FPP version</strong><span class="why">Upgrade in place (Upgrade button above) or by building a card</span></td><td>${esc(F.policy.fpp_version)}</td>` +
     on.map((u) => `<td class="cell ${u.version_ok ? "ok" : "odd"}${isPlayer(u.host) ? " player" : ""}" title="${esc(u.version)}">${u.version_ok ? "✓" : esc(u.version)}</td>`).join("") + "<td></td></tr>";
   $("#fleet-match").innerHTML = head(`<th class="pick"><input type="checkbox" id="fleet-pick-all" title="Select every drifting setting"></th><th>Setting</th><th>Expected</th>`) + "<tbody>" + F.match.map((r) => `
     <tr><td class="pick">${r.drift ? `<input type="checkbox" data-pick="${esc(r.name)}">` : ""}</td><td><strong>${r.kind === "network" ? "Gateway" : esc(r.name)}</strong><span class="why">${esc(r.why || r.description)}${r.kind === "network" ? " · applies at the next reboot" : r.needs ? ` · needs player ${r.needs}` : ""}</span></td>

@@ -5,6 +5,7 @@ Back up, monitor and rebuild the controllers of an [FPP (Falcon Player)](https:/
 - **Back up** every controller's configuration and, optionally, its media (sequences, music, video).
 - **Keep the fleet consistent**: compare every controller against a policy (time zone, time server, location, privacy, services and anything else you choose) and fix drift in a click.
 - **Check the show will play**: every sequence the schedule uses is on every controller, and during a show each remote is playing the same thing at the same time.
+- **Upgrade controllers in place** to a new FPP release, one at a time, each checked afterwards against its state before; controllers that can't reach GitHub get the OS image from your Mac.
 - **Rebuild or upgrade a controller onto a fresh SD card**: turn a backup into a ready-to-boot card image, on the same or a newer FPP version, flash it and verify it. The card comes up as the old controller (hostname, static address, settings, outputs, sequences) with no setup steps.
 - **Watch ColorLight receiver cards**: link drops, relinks at 100 Mbps, a card fppd didn't find at start, card restarts, read from each controller's own logs.
 - **Get told when something changes**: controllers going offline, remotes dark during a show, ColorLight link trouble, failed jobs, drift, missing sequences, new FPP releases.
@@ -81,6 +82,7 @@ Every controller compared with the fleet policy. Red cells differ from the expec
 - **Gateway** is checked too: each controller's default gateway against a rule per network (`172.1.2.x → 172.1.2.1`), first match wins for a controller on two networks. Until you press **Keep these rules** (or add `network.gateway` to the policy), the rules are inferred from what most controllers use. **Apply** saves the gateway through FPP's network API; it takes effect at the controller's next reboot, so a running show isn't disturbed. The Dashboard also flags a gateway that changed since the controller's last backup, which is how one lost in an upgrade shows up.
 - Click a red value to make it the expected one instead, or use **Remotes that disagree** to promote a setting into the policy. These edit the policy only.
 - The Controllers table shows each unit's FPP version, available updates (a newer release, and newer patches on its own branch), clock offset, uptime and storage.
+- **Upgrade to <version>…** (shown when a newer release is out) upgrades controllers in place, without a new card. It first checks each one: whether it can reach GitHub, free space, whether it's playing or an update is already running, its last backup, and old OS images left in its Uploads folder. It then says what the release notes say about the OS level (for 10.4: optional, kernel and security patches) and suggests the smaller FPP update unless the OS level is required. Tick controllers and press **Upgrade checked**: any without a backup from the last 24 hours are offered one first. Controllers are upgraded one at a time, the player last, and the run stops at the first problem. For each one it refuses while the show plays or if the next scheduled playlist starts before it could finish, records the controller's state, starts FPP's own update and follows its progress (a failure, 20 minutes without progress or a timeout stops it), reboots and waits, then compares: version, outputs, sequences, playlists, addresses, gateway, settings, FPP warnings and the ColorLight receiver. Controllers that can't reach GitHub (on a show network whose gateway doesn't route to the internet) get the release's OS image for their board instead: downloaded to this Mac once and checked against GitHub's SHA-256, uploaded through the player, applied, and deleted afterwards. **Check only** runs every check and the comparison without starting anything. **Clean up OS images…** lists the .fppos images (1-1.3 GB each) that FPP leaves in each controller's Uploads folder after an OS upgrade and deletes the ones you tick; a controller with an update running is skipped. An OS upgrade run from this app deletes its own image afterwards. A new card (Build card) stays the way back if an upgrade goes wrong, and the way to a fresh install.
 
 ### Fleet Management > Sequences
 Every sequence that a playlist in the player's schedule plays must be on every controller: a remote plays its own copy and stays dark if it is missing. The page shows what is missing where. Tick the missing ones and press **Push checked**: xLights (running on this computer) uploads each one as FPP Connect would, cut down to the channels that controller drives (v2 zstd sparse); the player also gets the audio. The copy on the controller is then checked against the show folder's render (same render ID and frame count) and the page rescans.
@@ -134,6 +136,9 @@ tools/xlights.py status [<name>.fseq ...]                    # xLights version, 
 tools/xlights.py push <name>.fseq --hosts a,b [--render]      # upload through xLights, verify
 tools/xlights.py versions --hosts all|a,b                    # render ID of each copy vs the show folder (read-only)
 tools/colorlight.py [--host <name>]                           # ColorLight link and receiver health (read-only)
+tools/upgrade.py plan [--target 10.4]                         # what an in-place upgrade would do (read-only)
+tools/upgrade.py run --hosts a,b [--os] [--dry-run]          # upgrade one at a time, verify each
+tools/upgrade.py images | cleanup --hosts a,b                 # leftover OS images: list (read-only) / delete
 ```
 
 `fleet.py` uses the player saved in `config/settings.json` unless given `--master`.
@@ -141,7 +146,7 @@ tools/colorlight.py [--host <name>]                           # ColorLight link 
 ## Safety
 
 - **Reading** is the default. Backups, scans, coverage, the live view and the monitor only use HTTP GET requests that don't change anything.
-- **Writing** to controllers happens only when you ask, after a confirmation: Fleet **Update checked** / **Apply** (through FPP's own settings API), player restarts, and sequence pushes (through xLights). Restarts skip controllers that are playing; pushes wait until the show is not playing.
+- **Writing** to controllers happens only when you ask, after a confirmation: Fleet **Update checked** / **Apply** (through FPP's own settings API), player restarts, sequence pushes (through xLights) and in-place upgrades (through FPP's own update pages). Restarts skip controllers that are playing; pushes wait until the show is not playing.
 - `snapshots/`, `work/` and `config/` are gitignored. Backups contain passwords and Wi-Fi keys: never commit them. Backups, staged cards and built images are created readable by your user only.
 - Flashing only targets disks listed as SD cards, refuses anything over 256 GB, requires typing the disk id, and verifies the card afterwards. The stock image is never modified.
 

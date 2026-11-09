@@ -116,10 +116,9 @@ class PasswordRequired(urllib.error.HTTPError):
                 f"(FPP's UI password, user {USER})")
 
 
-def request(url, timeout=6, method="GET", data=None, headers=None, password=None):
-    """Raw response body. password overrides the Keychain (Test connection,
-    adding a controller). Raises urllib.error.HTTPError, e.g. 401 when a
-    password is needed or wrong."""
+def open_url(url, timeout=6, method="GET", data=None, headers=None, password=None):
+    """The open response, for reading as it arrives (a long upgrade's output)
+    or sending a body from a file (a large upload). The caller closes it."""
     h = dict(headers or {})
     if password is None:
         target, via = target_of(url)
@@ -128,13 +127,20 @@ def request(url, timeout=6, method="GET", data=None, headers=None, password=None
         h["Authorization"] = "Basic " + base64.b64encode(f"{USER}:{password}".encode()).decode()
     req = urllib.request.Request(url, method=method, data=data, headers=h)
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as r:
-            return r.read()
+        return urllib.request.urlopen(req, timeout=timeout)
     except urllib.error.HTTPError as e:
         if e.code == 401:
             target, via = target_of(url)
             raise PasswordRequired(e, target, bool(password)) from None
         raise
+
+
+def request(url, timeout=6, method="GET", data=None, headers=None, password=None):
+    """Raw response body. password overrides the Keychain (Test connection,
+    adding a controller). Raises urllib.error.HTTPError, e.g. 401 when a
+    password is needed or wrong."""
+    with open_url(url, timeout, method, data, headers, password) as r:
+        return r.read()
 
 
 def needs_password(err):

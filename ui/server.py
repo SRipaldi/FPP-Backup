@@ -43,6 +43,7 @@ import colorlight  # noqa: E402
 import fleet  # noqa: E402
 import fpp_http  # noqa: E402
 import get_image  # noqa: E402
+import upgrade  # noqa: E402
 import xlights  # noqa: E402
 
 TOKEN = secrets.token_urlsafe(24)
@@ -168,7 +169,7 @@ class Job:
             return
         if status == "failed":
             notify("bad", f"Failed: {self.title}" + (f" ({note})" if note else ""), "jobs")
-        elif self.kind in ("snapshot", "build", "flash", "fleet", "xlights"):
+        elif self.kind in ("snapshot", "build", "flash", "fleet", "xlights", "upgrade"):
             notify("ok", f"Done: {self.title}", "jobs")
 
     def summary(self):
@@ -299,6 +300,17 @@ def act_snapshot(body):
     return start_job("snapshot", f"Snapshot {body.get('host', ip)}" + (" + media" if media else ""), [step])
 
 
+def snapshot_step(u):
+    """snapshot.py's command line for one controller ({host, ip, via, media})."""
+    ip, via, host = u.get("ip", ""), u.get("via") or None, u.get("host", "")
+    if not re.match(r"^\d+\.\d+\.\d+\.\d+$", ip) or not re.match(r"^[\w\-]*$", host):
+        raise ValueError(f"bad controller: {host or ip}")
+    if via and via != CONFIG["master"]:
+        raise ValueError(f"{host}: unexpected proxy {via}")
+    step = [PY, TOOLS / "snapshot.py"] + (["--media"] if u.get("media") else [])
+    return step + (["--via", via, ip] if via else [f"http://{ip}"])
+
+
 def act_backup(body):
     """Snapshot several controllers in one job: one snapshot.py run per unit, in
     turn, each with its own media choice; a failed unit does not stop the rest.
@@ -306,19 +318,58 @@ def act_backup(body):
     units = body.get("units") or []
     if not units:
         raise ValueError("no controllers selected")
-    steps, names = [], []
-    for u in units:
-        ip, via, host = u.get("ip", ""), u.get("via") or None, u.get("host", "")
-        if not re.match(r"^\d+\.\d+\.\d+\.\d+$", ip) or not re.match(r"^[\w\-]*$", host):
-            raise ValueError(f"bad controller: {host or ip}")
-        if via and via != CONFIG["master"]:
-            raise ValueError(f"{host}: unexpected proxy {via}")
-        step = [PY, TOOLS / "snapshot.py"] + (["--media"] if u.get("media") else [])
-        step += ["--via", via, ip] if via else [f"http://{ip}"]
-        steps.append(step)
-        names.append(host + (" + media" if u.get("media") else ""))
+    steps = [snapshot_step(u) for u in units]
+    names = [u.get("host", "") + (" + media" if u.get("media") else "") for u in units]
     title = f"Back up {len(units)} controller(s): " + ", ".join(names)
     return start_job("snapshot", title, steps, keep_going=True)
+
+
+_upg = {"t": 0, "plan": None, "lock": threading.Lock()}
+
+
+def upgrade_plan(refresh=False):
+    """tools/upgrade.py's plan (read-only, ~30 s), cached for two minutes."""
+    with _upg["lock"]:
+        if refresh or _upg["plan"] is None or time.time() - _upg["t"] > 120:
+            _upg["plan"] = upgrade.plan(need_player())
+            _upg["t"] = time.time()
+        return _upg["plan"]
+
+
+def act_upgrade(body):
+    """Upgrade controllers in place, one at a time (tools/upgrade.py run), after
+    backing up the ones the user chose to. Addresses come from the server's own
+    plan, not the request."""
+    plan = upgrade_plan()
+    rows = {u["host"]: u for u in plan["units"]}
+    hosts = [str(h) for h in body.get("hosts") or []]
+    if not hosts:
+        raise ValueError("no controllers selected")
+    for h in hosts:
+        if h not in rows:
+            raise ValueError(f"{h} is not in the upgrade plan: refresh it")
+        if rows[h]["blockers"]:
+            raise ValueError(f"{h}: {'; '.join(rows[h]['blockers'])}")
+        if body.get("os") and not rows[h].get("fppos"):
+            raise ValueError(f"{h}: FPP {plan['release']['tag']} has no OS image for its board; choose the FPP update")
+    target = plan["release"]["tag"]
+    if body.get("target") and body["target"] != target:
+        raise ValueError(f"the plan is for {target}, not {body['target']}: refresh it")
+    steps = [snapshot_step(rows[h]) for h in body.get("backup") or [] if h in hosts]
+    run = [PY, TOOLS / "upgrade.py", "run", "--hosts", ",".join(hosts), "--target", target]
+    steps.append(run + (["--os"] if body.get("os") else []) + (["--dry-run"] if body.get("dry_run") else []))
+    _upg["plan"] = None  # versions change: the next look re-reads them
+    title = f"{'Check' if body.get('dry_run') else 'Upgrade'} {', '.join(hosts)} to FPP {target}"
+    return start_job("upgrade", title, steps, exclusive="upgrade", after=None if body.get("dry_run") else rescan_after)
+
+
+def act_upgrade_cleanup(body):
+    """Delete leftover OS images (.fppos) from the chosen controllers' Uploads."""
+    hosts = [str(h) for h in body.get("hosts") or []]
+    if not hosts or not all(upgrade.name_ok(h) for h in hosts):
+        raise ValueError("no controllers selected")
+    title = f"Delete old OS images on {', '.join(hosts)}"
+    return start_job("upgrade", title, [[PY, TOOLS / "upgrade.py", "cleanup", "--hosts", ",".join(hosts)]], exclusive="upgrade")
 
 
 def act_download(body):
@@ -960,7 +1011,7 @@ def act_sequence_versions(body):
                      exclusive="versions")
 
 
-ACTIONS = {"snapshot": act_snapshot, "backup": act_backup, "download": act_download, "build": act_build, "flash": act_flash,
+ACTIONS = {"snapshot": act_snapshot, "backup": act_backup, "upgrade": act_upgrade, "upgrade/cleanup": act_upgrade_cleanup, "download": act_download, "build": act_build, "flash": act_flash,
            "fleet/apply": act_fleet_apply, "fleet/expect": act_fleet_expect, "fleet/restart": act_fleet_restart,
            "fleet/preview": act_fleet_preview, "fleet/rescan": act_rescan_unit, "fleet/gateway-rules": act_gateway_rules, "xlights/push": act_xlights_push, "sequences/versions": act_sequence_versions, "fleet/policy": act_fleet_policy_save,
            "inventory": act_inventory, "inventory/rebuild": act_inventory_rebuild,
@@ -1038,6 +1089,10 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/api/notifications":
                 items = sorted(_notes["items"], key=lambda n: -n["t"])
                 return self.send(200, {"unread": sum(not n["read"] for n in items), "items": items[:60]})
+            if path == "/api/upgrade/images":
+                return self.send(200, upgrade.images(need_player()))
+            if path == "/api/upgrade/plan":
+                return self.send(200, upgrade_plan(refresh="refresh=1" in self.path))
             if path == "/api/colorlight":
                 return self.send(200, colorlight_view(refresh="refresh=1" in self.path))
             if path == "/api/show/live":

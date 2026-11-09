@@ -117,8 +117,12 @@
       <strong>Preview of an unsaved policy</strong> from Settings. The tables below show what would drift if you saved it; updating is disabled until you do. <a href="#settings">Back to Settings</a>
     </div>
 
-    <h2 class="section">Controllers</h2>
+    <div class="bar section-bar">
+      <h2 class="section">Controllers</h2>
+      <div class="row"><button id="img-open" title="OS images (.fppos) FPP leaves in a controller's Uploads folder after an OS upgrade">Clean up OS images…</button><button id="upg-open" hidden>Upgrade FPP…</button></div>
+    </div>
     <div class="table-wrap"><table id="fleet-units"></table></div>
+
 
     <h2 class="section">Settings that should match <span class="muted small">policy</span></h2>
     <p class="muted small">Red cells differ from the expected value. <strong>Apply</strong> writes the expected value to those units only. Click a red value to make it the expected one instead (edits the policy, not the controllers).</p>
@@ -357,6 +361,46 @@
 </main>
 </div>
 
+
+<dialog id="upg-dialog" class="dialog">
+  <form method="dialog" class="dialog-body">
+    <div class="bar"><h2 id="upg-title" style="margin:0">Upgrade</h2><span id="upg-when" class="muted small"></span></div>
+    <p id="upg-notes" class="muted small"></p>
+    <p id="upg-show" class="small"></p>
+
+    <h3>1. Controllers</h3>
+    <div class="table-wrap"><table id="upg-units"></table></div>
+
+    <h3>2. What kind of upgrade?</h3>
+    <div id="upg-kind" class="choices"></div>
+
+    <div id="upg-backup-q" hidden>
+      <h3>3. Backup first?</h3>
+      <div id="upg-backup" class="choices"></div>
+    </div>
+
+    <p id="upg-summary" class="note-box small"></p>
+    <div class="bar policy-buttons">
+      <button type="button" class="small" id="upg-refresh">Check again</button>
+      <div class="row">
+        <button type="button" id="upg-cancel">Cancel</button>
+        <button type="button" id="upg-dry" title="Every check and the before/after comparison, without starting anything">Check only</button>
+        <button type="button" id="upg-go" class="primary">Start upgrade</button>
+      </div>
+    </div>
+  </form>
+</dialog>
+<dialog id="img-dialog" class="dialog">
+  <form method="dialog" class="dialog-body">
+    <div class="bar"><h2 style="margin:0">Clean up OS images</h2><span id="img-when" class="muted small"></span></div>
+    <p class="small muted">FPP keeps the OS image (a .fppos file, 1–1.3 GB each) in a controller's Uploads folder after an OS upgrade. They aren't needed afterwards: an upgrade downloads a fresh one, and new cards are built from the images on this Mac. A controller with an update running is skipped.</p>
+    <div class="table-wrap"><table id="img-units"></table></div>
+    <div class="bar policy-buttons">
+      <span id="img-total" class="small"></span>
+      <div class="row"><button type="button" id="img-cancel">Cancel</button><button type="button" id="img-go" class="danger" disabled>Delete</button></div>
+    </div>
+  </form>
+</dialog>
 <div id="toast" hidden></div>
 <script src="/app.js"></script>
 </body>
