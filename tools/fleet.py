@@ -87,11 +87,15 @@ def fetch(url, timeout=6, method="GET", data=None):
 
 
 def fetch_json(url, timeout=6, tries=3):
-    # The player's proxy occasionally returns an empty body; retry.
+    # The player's proxy occasionally returns an empty body, and a controller can return a transient 503 right
+    # after a reboot (its web server is up but fppd is not answering yet). Both mean "try again"; retry them.
+    # A 503 that persists still surfaces once the tries run out. Callers that must not wait pass tries=1.
     for i in range(tries):
         try:
             return json.loads(fetch(url, timeout))
-        except ValueError:
+        except (ValueError, urllib.error.HTTPError) as e:
+            if isinstance(e, urllib.error.HTTPError) and e.code != 503:
+                raise
             if i == tries - 1:
                 raise
             time.sleep(1)

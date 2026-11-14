@@ -69,6 +69,7 @@ class Run(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         upgrade.SNAPSHOTS = Path(self.tmp.name) / "snapshots"
         upgrade.FPPOS_DIR = Path(self.tmp.name) / "fppos"
+        upgrade.PRE_DIR = Path(self.tmp.name) / "pre"
         self.fakes = []
 
     def tearDown(self):
@@ -124,6 +125,48 @@ class Run(unittest.TestCase):
         self.assertIsNone(err, out)
         self.assertEqual(f.uploads, {})
 
+    def test_startup_timeout_gets_one_more_reboot(self):
+        f = self.fake(mode="startup-fails-once")
+        _, err, out = self.go(f, use_os=True)
+        self.assertIsNone(err, out)
+        self.assertIn("rebooting once more", out)
+        self.assertEqual(f.reboots, 2)
+
+    def test_startup_failing_twice_stops(self):
+        f = self.fake(mode="startup-fails")
+        _, err, _ = self.go(f, use_os=True)
+        self.assertIn("failed again after a second reboot", err)
+        self.assertEqual(f.reboots, 2, "only one extra reboot")
+
+    def test_fpp_update_that_quiets_fppd_is_rebooted_not_failed(self):
+        # The Porch case: an fpp update applies, then takes fppd (and its progress feed) down to restart its
+        # services and does not reboot on its own. The tool must read the quiet feed as "restarting" and reboot
+        # to finish — not call it a failure and leave fppd stopped.
+        f = self.fake(mode="fpp-restart")
+        p, err, out = self.go(f)
+        self.assertEqual(p["method"], "fpp")
+        self.assertIsNone(err, out)
+        self.assertEqual(f.version, "10.4")
+        self.assertIn(("POST", "/api/system/reboot"), f.requests, "the tool rebooted to finish the update")
+        self.assertIn("PASS  version: 10.3 -> 10.4", out)
+
+    def test_fppd_down_after_reboot_tells_you_to_power_cycle(self):
+        # The update took and the board is back on the network, but fppd never comes up. Distinct from a box that
+        # vanishes (NotReturned): the message says it updated, isn't playing yet, and to power-cycle then recheck.
+        f = self.fake(mode="fppd-down")
+        _, err, out = self.go(f)
+        self.assertIsNotNone(err, out)
+        self.assertIn("fppd is stopped", err)
+        self.assertIn("Power-cycle", err)
+        self.assertIn("recheck --hosts FakeUnit", err)
+
+    def test_copied_file_paths_are_not_shown(self):
+        for line in ("usr/share/vim/vim91/autoload/htmlcomplete.vim", "var/log/apache2/error.log",
+                     'rsync: [generator] chown "/mnt/boot/firmware/tispl.bin" failed: Operation not permitted (1)'):
+            self.assertTrue(upgrade.NOISE.search(line), line)
+        for line in ("===== Rebooting =====", "Download complete...", "ERROR: not enough space"):
+            self.assertTrue(upgrade.SHOW.search(line) and not upgrade.NOISE.search(line), line)
+
     def test_reported_failure_stops_without_reboot(self):
         f = self.fake(mode="fail")
         _, err, _ = self.go(f)
@@ -136,7 +179,34 @@ class Run(unittest.TestCase):
 
     def test_controller_never_returns(self):
         _, err, _ = self.go(self.fake(mode="no-return"))
-        self.assertIn("did not come back", err)
+        self.assertIn("did not rejoin the network", err)
+
+    def test_os_master_not_returning_gives_power_cycle_guidance(self):
+        # The master is reached over one link (its Wi-Fi); a first-boot stall after an OS upgrade makes it invisible.
+        # The tool must say the upgrade may have succeeded and tell the user to power-cycle and re-check — not "failed".
+        _, err, _ = self.go(self.fake(mode="no-return"), use_os=True)
+        self.assertIn("may well have completed", err)
+        self.assertIn("Power-cycle", err)
+        self.assertIn("recheck --hosts", err)
+        self.assertIn("only if it stays on the old version", err)
+
+    def test_recheck_confirms_a_recovered_controller(self):
+        import fleet
+        f = self.fake()
+        pre = upgrade.capture(f.unit())                 # state as of 10.3
+        upgrade.save_pre(f.unit(), pre, "10.4", "os")   # as `run` would, before the reboot
+        f.version = "10.4"                              # the upgrade did take; the box is back after a power cycle
+        saved = fleet.discover
+        fleet.discover = lambda *a, **k: [f.unit()]
+        try:
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                rc = upgrade.recheck(f.addr, ["FakeUnit"])
+        finally:
+            fleet.discover = saved
+        self.assertEqual(rc, 0, out.getvalue())
+        self.assertIn("FakeUnit: OK", out.getvalue())
+        self.assertIn("PASS  version: 10.3 -> 10.4", out.getvalue())
 
     def test_verification_catches_lost_content(self):
         _, err, out = self.go(self.fake(mode="lose-sequence"))
@@ -188,6 +258,46 @@ class Run(unittest.TestCase):
         p = upgrade.unit_plan(f.unit(), release(), time.time())
         self.assertTrue(p["backup_due"])
         self.assertTrue(any("old OS image" in n for n in p["notes"]))
+
+
+class VerifyPlugins(unittest.TestCase):
+    """The 'Plugins must be reinstalled' warning is expected after an OS upgrade and should read that way."""
+
+    def state(self, **over):
+        s = {"version": "10.3", "host": "FPP-master", "fppd": "running", "mode": "player", "os_level": "2026-10b",
+             "ipv4": ["172.1.2.10"], "gateway": "", "outputs": {}, "sequences": [], "playlists": [], "settings": {},
+             "warnings": [], "plugins": [], "colorlight": False}
+        s.update(over)
+        return s
+
+    def find(self, results, name):
+        return next((r for r in results if r[1] == name), None)
+
+    def test_plugin_warning_is_its_own_check_after_an_os_upgrade(self):
+        pre = self.state()
+        post = self.state(version="10.4", warnings=[upgrade.PLUGINS_WARNING], plugins=["fpp-FPPMon", "remote-falcon"])
+        results = upgrade.verify(None, pre, post, "10.4", os_upgrade=True)
+        plug = self.find(results, "plugins")
+        self.assertEqual(plug[0], "WARN")
+        self.assertIn("expected after an OS upgrade", plug[2])
+        self.assertIn("fpp-FPPMon", plug[2])
+        self.assertIn("remote-falcon", plug[2])
+        # and it is NOT also dumped into the generic warnings line
+        self.assertEqual(self.find(results, "FPP warnings")[2], "no new warnings")
+
+    def test_plugin_warning_on_an_fpp_update_is_an_ordinary_warning(self):
+        pre = self.state()
+        post = self.state(version="10.4", warnings=[upgrade.PLUGINS_WARNING])
+        results = upgrade.verify(None, pre, post, "10.4", os_upgrade=False)
+        self.assertIsNone(self.find(results, "plugins"))
+        self.assertIn(upgrade.PLUGINS_WARNING, self.find(results, "FPP warnings")[2])
+
+    def test_unexpected_warning_still_flagged_alongside_the_plugin_note(self):
+        pre = self.state()
+        post = self.state(version="10.4", warnings=[upgrade.PLUGINS_WARNING, "Disk space is low"])
+        results = upgrade.verify(None, pre, post, "10.4", os_upgrade=True)
+        self.assertIsNotNone(self.find(results, "plugins"))
+        self.assertIn("Disk space is low", self.find(results, "FPP warnings")[2])
 
 
 if __name__ == "__main__":
