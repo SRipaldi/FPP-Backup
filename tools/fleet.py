@@ -14,7 +14,6 @@ Usage:
   tools/fleet.py restart --hosts all          # fppd only; skips units that are playing
   tools/fleet.py reboot --hosts FPP-Perm
 """
-# file deepcode ignore Ssrf: operator-named FPP controllers on the show LAN; contacting them is this tool's job
 import argparse
 import concurrent.futures
 import json

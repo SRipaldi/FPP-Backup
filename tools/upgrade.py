@@ -33,11 +33,6 @@ images lists the .fppos OS images left in each controller's Uploads folder
 (FPP keeps them after an OS upgrade; each is 1-1.3 GB); cleanup deletes them,
 skipping a controller while an update runs there.
 """
-# Snyk Code flags every controller address and file path these tools take from the command line or the
-# network. Contacting the controllers you name, and the release images GitHub lists, is their job; names and
-# URLs that reach file paths are checked (name_ok, ASSET_RE) before use.
-# file deepcode ignore Ssrf: operator-named controllers on the LAN, and GitHub release assets
-# file deepcode ignore PT: asset names are checked against ASSET_RE and confined to FPPOS_DIR
 import argparse
 import collections
 import concurrent.futures

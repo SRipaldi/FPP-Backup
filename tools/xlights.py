@@ -24,7 +24,6 @@ Usage:
   tools/xlights.py push <name>.fseq --hosts FPP-Tree --render   # re-render first
   tools/xlights.py versions --hosts all|FPP-Tree,FPP-Roof
 """
-# file deepcode ignore PT: sequence names are reduced to a stem and only matched against files already in the show folder
 import argparse
 import concurrent.futures
 import json
