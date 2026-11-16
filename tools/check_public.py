@@ -97,12 +97,20 @@ def private_terms():
     return out
 
 
+SECRET_LABELS = {label for label, _ in SECRETS}
+
+
 def scan_text(text, where, rules):
     found = []
     for i, line in enumerate(text.splitlines(), 1):
         for label, rx in rules:
             m = rx.search(line)
-            if m:
+            if not m:
+                continue
+            if label in SECRET_LABELS:
+                # Never echo a secret: this output can end up in a terminal log, CI or a pasted transcript.
+                found.append(f"{where}:{i}: {label} at column {m.start() + 1} (value not shown)")
+            else:
                 found.append(f"{where}:{i}: {label}: {m.group(0)[:60]!r}")
     return found
 

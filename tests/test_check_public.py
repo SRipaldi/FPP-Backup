@@ -50,6 +50,8 @@ class CheckPublic(unittest.TestCase):
         for text in ("pass" 'word = "hunter22x"', '{"ps' 'k": "correcthorse"}', "wpa_" "passphrase=MyHomeWifi1",
                      "token ghp_" + "a" * 36, "-----BEGIN OPENSSH " "PRIVATE KEY-----", "mail me at jo" "@" "mailhost.net"):
             self.assertTrue(self.hits(text), text)
+            self.assertFalse(any("hunter22x" in h or "MyHomeWifi1" in h for h in self.hits(text)),
+                             "a secret's value is never echoed")
 
     def test_text_checks_markdown_headings_but_commit_msg_skips_git_comments(self):
         root = Path(self.tmp.name)
