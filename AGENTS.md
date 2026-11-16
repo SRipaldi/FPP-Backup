@@ -93,13 +93,13 @@ The fleet is a real, running light show.
 | CodeQL (`security-extended` queries) | SAST: Python and JavaScript | GitHub default setup; every PR and weekly. A high or critical alert blocks merging (ruleset). |
 | ShellCheck, hadolint | The shell scripts and the builder Dockerfile, which CodeQL can't read | `.github/workflows/lint.yml`, every PR |
 | OSV-Scanner | SCA: the builder container as `build_image.sh` runs it (base image + the apt packages it installs), and bb-imager's `Cargo.lock` at the pinned commit | `.github/workflows/security-scans.yml`, weekly + PRs touching them |
-| OpenSSF Scorecard | Repository posture: branch protection, pinning, signing, token permissions | same workflow, weekly |
+| OpenSSF Scorecard | Repository posture: branch protection, pinning, signing, token permissions | same workflow, weekly; a score table on the run's summary page |
 | Syft | Signed SPDX SBOMs attached to each release | `.github/workflows/sbom.yml`, run against the draft release |
 | Dependabot | Version bumps for the base image and the pinned actions; security alerts | `.github/dependabot.yml` |
 | Secret scanning + push protection | Known token formats, server-side | repository settings |
 | `tools/check_public.py` | This installation's names and addresses, secrets, personal data | git hooks, before anything is published |
 
-Results land in Security > Code scanning, one category per tool. Dependabot alerts stay empty by design: there are no package manifests, which is why the image and Cargo.lock are scanned directly.
+CodeQL and OSV-Scanner results land in Security > Code scanning, one category per tool. Scorecard's program has no SARIF output (only its third-party action does), so its table is on the run's summary page. Dependabot alerts stay empty by design: there are no package manifests, which is why the image and Cargo.lock are scanned directly.
 
 **Trust model for CI**, after third-party action compromises (tj-actions/changed-files, trivy-action) in which a moved tag shipped malicious code:
 - **No third-party GitHub Actions.** The repository allows only GitHub-owned actions, and workflows pin even those by full commit SHA, with the version in a comment. Dependabot proposes updates after a 14-day cooldown.
