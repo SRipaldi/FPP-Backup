@@ -31,6 +31,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import fpp_http  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
+HOST_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9\-]{0,62}$")  # an FPP hostname (also a file-path component here)
 # Per-installation settings (gitignored): which player is the source of truth,
 # and app behaviour. Edited from the UI's Settings page.
 SETTINGS = ROOT / "config/settings.json"
@@ -86,12 +87,16 @@ def fetch(url, timeout=6, method="GET", data=None):
                             headers={"Content-Type": "text/plain"} if data is not None else {})
 
 
-def fetch_json(url, timeout=6, tries=3):
-    # The player's proxy occasionally returns an empty body; retry.
+def fetch_json(url, timeout=6, tries=3, retry_503=False):
+    # The player's proxy occasionally returns an empty body: try again. A 503 (fppd down, e.g. right after a
+    # reboot) is retried only when the caller asks: during a scan a stopped fppd 503s every time, and waiting on
+    # it would only slow the scan. Callers that must not wait pass tries=1.
     for i in range(tries):
         try:
             return json.loads(fetch(url, timeout))
-        except ValueError:
+        except (ValueError, urllib.error.HTTPError) as e:
+            if isinstance(e, urllib.error.HTTPError) and not (retry_503 and e.code == 503):
+                raise
             if i == tries - 1:
                 raise
             time.sleep(1)
@@ -135,7 +140,9 @@ def discover(master, inventory=None, hosts=None):
     systems = fetch_json(f"http://{master}/api/fppd/multiSyncSystems", timeout=8).get("systems", [])
     by_host = {}
     for s in systems:
-        if re.match(r"^\d+\.\d+\.\d+\.\d+$", s.get("address", "")):
+        # Names and addresses here are what devices on the network announce; a name ends up in file paths
+        # (snapshots, upgrade state), so only well-formed ones are taken.
+        if re.match(r"^\d+\.\d+\.\d+\.\d+$", s.get("address", "")) and HOST_RE.match(s.get("hostname") or ""):
             by_host.setdefault(s.get("hostname"), []).append(s["address"])
     expected = {c["host"]: c for c in (inventory or {}).get("controllers", [])}
     for host, c in expected.items():
@@ -163,7 +170,7 @@ def discover(master, inventory=None, hosts=None):
                 continue
             if info.get("HostName") and info["HostName"] != host:
                 continue
-            return {"host": info.get("HostName", host), "ip": a, "via": via, "base": base,
+            return {"host": host, "ip": a, "via": via, "base": base,
                     "online": True, "addresses": addrs, "version": info.get("Version"),
                     "platform": info.get("Platform"), "variant": info.get("SubPlatform") or info.get("Variant"),
                     "mode": info.get("Mode"), "cape": (info.get("capeInfo") or {}).get("name"),

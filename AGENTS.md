@@ -33,6 +33,10 @@ tools/verify_unit.py  read-only check of a booted unit against its snapshot
 tools/get_image.py    FPP release images from GitHub
 tools/fpp_http.py     every request to a controller: adds the UI password (HTTP Basic, user admin) from the macOS Keychain
 tools/xlights.py      pushes sequences to controllers through xLights' automation API (FPP Connect)
+tools/upgrade.py      in-place upgrades: plan (read-only), run (one unit at a time, follow, reboot, verify);
+                      images / cleanup (leftover .fppos in Uploads); the Fleet page's dialogs run it as jobs.
+                      Upgrade output is filtered: an OS upgrade prints ~50,000 file lines (froze the Jobs tab)
+tests/                unittest suite; fake_fpp.py is a pretend controller for the upgrade's write paths
 tools/colorlight.py   ColorLight receiver health from each controller's syslog/fppd.log tails; history in
                       work/cache/colorlight.json; the monitor checks it every 5 min (Show > ColorLight)
 ```
@@ -41,7 +45,7 @@ Pure vs network: `fleet.scan_fleet()` talks to controllers (about 30 s); `fleet.
 
 ## How to check a change
 
-There is no automated test suite. Verify the way this repo has been verified:
+`python3 -m unittest discover -s tests` runs the tests (stdlib only, about 30 s): the in-place upgrade against a fake controller, including failure, stall, no-return and lost-content cases. There is no other suite; otherwise verify the way this repo has been verified:
 
 - Syntax: `python3 -c "import ast; ast.parse(open('ui/server.py').read())"` and `node --check ui/static/app.js`.
 - Server: run it on a spare port (`--no-browser --no-monitor --port 8798`), call the endpoint with `curl`; every `/api/` request (GET too, except job streams) needs the per-run token from the page's `<meta name="token">` in an `X-Token` header, and a local `Host`.
@@ -80,6 +84,7 @@ The fleet is a real, running light show.
 - **Restart**: settings such as `TimeZone`, `Latitude`, `Locale` only take effect after an fppd restart (schema `restart: 2`).
 - **Logs**: `GET /api/file/Logs/var/log/syslog?tail=N` (capital `L`; also `Logs/fppd.log`) returns the last N lines, so a check reads only what is new. Rotated `syslog.1` is plain text on 10.x, older ones are compressed.
 - **ColorLight**: outputs are `LEDPanelMatrix` entries with `subType` `ColorLight5a75` in `/api/channel/output/channelOutputsJSON`. fppd searches for receivers only when it starts. The API has no link speed (`/api/network/interface` has carrier only); the speed comes from the kernel's "Link is Up - 1Gbps/Full" lines. A down/up pair under a second apart is the boot-time reset, not a drop.
+- **In-place upgrade** (what FPP's About page does): `POST /upgradefpp.php?wrapped=1&version=10.4` runs `scripts/upgrade_FPP` (git fetch + checkout + rebuild on the controller; 5-30 min) and ends with "Upgrade complete", no reboot; then `POST /api/system/reboot`. `POST /upgradeOS.php?wrapped=1&os=<.fppos URL or a file in Uploads>` replaces the root filesystem and reboots by itself; it needs 2x the image size free. Both hold a server-side lock (409 when another update runs) and keep going if the client disconnects. `GET /api/system/updateActivity` reports the latest run (`runId`, `inProgress`, `stage`, `failed`); `GET /api/system/updateStatus` says whether the unit itself reached GitHub (`checked`). Uploads go to `POST /jqupload.php` (multipart field `myfile`, up to 1999 MB, staged on the media disk) and are removed with `DELETE /api/file/Uploads/<name>`. An in-place OS upgrade keeps the architecture: a 32-bit Pi needs the `Pi-` image, not `Pi64-`. The first boot after an OS upgrade can run `fppinit.service` past systemd's time limit (seen on a PocketBeagle2, 10.3 -> 10.4): what it never reached, such as writing `wpa_supplicant-wlan0.conf`, stays undone (WiFi down) until one more reboot. upgrade.py reads the syslog for that and reboots once more. An FPP update can also leave fppd stopped without rebooting (seen on a BeagleBone Black, 10.3 -> 10.4: web up on the new version, `/api/fppd/*` 503); upgrade.py treats its progress going quiet after real progress as "restarting", always reboots at the end, and retries a transient 503 right after a reboot.
 - **Status**: `/api/fppd/status` positions are whole seconds; `/api/fppd/multiSyncStats` on a remote counts sync packets from the player.
 
 ## xLights automation

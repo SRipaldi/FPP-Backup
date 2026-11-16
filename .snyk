@@ -1,0 +1,10 @@
+# Snyk policy. Keep Snyk out of local, git-ignored data: controller snapshots hold
+# passwords and Wi-Fi keys, and the ~1,400 JSON files under snapshots/ and work/ are
+# not infrastructure configuration (the IaC scanner fails on them).
+version: v1.25.0
+exclude:
+  global:
+    - snapshots/**
+    - work/**
+    - config/**
+    - fpp-issues/**
