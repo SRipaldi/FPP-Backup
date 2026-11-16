@@ -43,5 +43,6 @@ jobs:
           PY: ${{ matrix.python == '' && '/usr/bin/python3' || 'python3' }}
         run: |
           "$PY" --version
-          "$PY" -m unittest discover -s tests -v
+          # A hang prints every thread's stack and fails after 10 minutes, instead of a silent job timeout.
+          "$PY" -c 'import faulthandler, unittest; faulthandler.dump_traceback_later(600, exit=True); unittest.main(module=None, argv=["tests", "discover", "-s", "tests", "-v"])'
           "$PY" tools/check_public.py --all

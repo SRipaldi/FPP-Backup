@@ -12,7 +12,7 @@ import time
 import unittest
 from pathlib import Path
 
-os.environ["FPP_BACKUP_KEYCHAIN"] = "FPP-Backup-tests"  # never send a real stored password to the fake
+os.environ["FPP_BACKUP_KEYCHAIN"] = "off"  # no Keychain at all: never a real stored password, never a CI unlock prompt
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "tools"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import upgrade  # noqa: E402
