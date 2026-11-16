@@ -3,10 +3,12 @@
 The fields are the ones `diskutil info -plist` reports. No disk is touched.
 Run: python3 -m unittest discover -s tests
 """
+import os
 import sys
 import unittest
 from pathlib import Path
 
+os.environ["FPP_BACKUP_KEYCHAIN"] = "off"  # tests never touch the Keychain (see tools/fpp_http.py)
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "tools"))
 import flash_card  # noqa: E402
 
