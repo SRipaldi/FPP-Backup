@@ -115,8 +115,14 @@ def scan_text(text, where, rules):
     return found
 
 
+def read(path):
+    """A file's text; bytes that aren't UTF-8 are replaced, never a reason to skip the file."""
+    return path.read_bytes().decode("utf-8", "replace")
+
+
 def git(*args):
-    return subprocess.run(["git", *args], cwd=ROOT, capture_output=True, text=True, check=True).stdout
+    # A diff can hold bytes that aren't UTF-8 (a Latin-1 file): replace them, never crash the hook on them.
+    return subprocess.run(["git", *args], cwd=ROOT, capture_output=True, check=True).stdout.decode("utf-8", "replace")
 
 
 def check_paths(paths):
@@ -188,10 +194,10 @@ def main():
     elif args.text:
         found = []
         for f in args.text:  # every line: a Markdown heading starts with # too
-            found += scan_text(Path(f).read_text(), f, rules)
+            found += scan_text(read(Path(f)), f, rules)
     elif args.commit_msg:
         # git's own comment lines in the message file are stripped before the commit, so never published.
-        text = "\n".join("" if ln.startswith("#") else ln for ln in Path(args.commit_msg).read_text().splitlines())
+        text = "\n".join("" if ln.startswith("#") else ln for ln in read(Path(args.commit_msg)).splitlines())
         found = scan_text(text, args.commit_msg, rules)
     elif args.log:
         found = scan_commits(git("rev-list", args.log).split(), rules)
@@ -207,9 +213,15 @@ def main():
         found = check_paths(git("ls-files").splitlines())
         for p in git("ls-files").splitlines():
             try:
-                found += scan_text((ROOT / p).read_text(), p, rules)
-            except (UnicodeDecodeError, OSError):
+                blob = (ROOT / p).read_bytes()
+            except OSError:
                 continue
+            # A binary file (a NUL in its first 8 KB, git's own test: images, fuzz seeds) is not text that gets
+            # published as words; decoding it would only produce false matches. Text that isn't valid UTF-8 is
+            # still checked, with the odd bytes replaced.
+            if b"\0" in blob[:8000]:
+                continue
+            found += scan_text(blob.decode("utf-8", "replace"), p, rules)
     if found:
         print("Private details or secrets found in what would be published (this repo is public):", file=sys.stderr)
         for f in found:

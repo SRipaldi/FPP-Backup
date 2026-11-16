@@ -1,13 +1,17 @@
-# Software bills of materials for a release, signed and attached to it.
+# Software bills of materials and a source archive for a release, signed and attached to it.
 #
 #   sbom-builder-image.spdx.json   the card-builder container as build_image.sh runs it
 #   sbom-bb-imager.spdx.json       bb-imager-cli's Rust dependencies at the pinned commit
 #   sbom-fpp-backup.spdx.json      this repository (standard library only; recorded for completeness)
+#   FPP-Backup-<tag>.tar.gz        the source at the tag (git archive), so a download can be verified
+#   FPP-Backup-<tag>.sigstore.json the signature bundle (build provenance) covering all of the above
+#   FPP-Backup-<tag>.intoto.jsonl  the same signed provenance as a DSSE envelope (the in-toto attestation
+#                                  format SLSA tools publish; its payload is the in-toto statement)
 #
 # Releases are immutable once published, so this runs against a DRAFT release:
 #   gh release create vX.Y.Z --draft ...   then   gh workflow run sbom.yml -f tag=vX.Y.Z
 #   wait for it, then publish the draft. Verify a downloaded SBOM with:
-#   gh attestation verify sbom-builder-image.spdx.json -R SRipaldi/FPP-Backup
+#   gh attestation verify FPP-Backup-<tag>.tar.gz -R SRipaldi/FPP-Backup
 # Without a tag it is a dry run: SBOMs of the current commit, signed, kept as a workflow artifact only.
 #
 # Trust model (see AGENTS.md "CI and scanning"): Syft (third-party, pinned by version and SHA-256) runs in
@@ -53,10 +57,16 @@ jobs:
           syft scan "dir:$RUNNER_TEMP/bb-imager" --source-name bb-imager-cli --source-version "$(sed -n 's/^VERSION=\${1:-\(.*\)}$/\1/p' tools/setup_bb_imager.sh)" -o "spdx-json=sbom-bb-imager.spdx.json"
       - name: This repository
         run: syft scan dir:. --exclude ./.git --source-name fpp-backup --source-version "${TAG:-$GITHUB_SHA}" -o "spdx-json=sbom-fpp-backup.spdx.json"
+      - name: Source archive
+        run: |
+          name="FPP-Backup-${TAG:-${GITHUB_SHA::12}}"
+          git archive --format=tar.gz --prefix="$name/" -o "$name.tar.gz" HEAD
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
         with:
           name: sbom
-          path: sbom-*.spdx.json
+          path: |
+            sbom-*.spdx.json
+            FPP-Backup-*.tar.gz
           retention-days: 7
 
   sign-and-attach:
@@ -83,8 +93,19 @@ jobs:
           [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::not a release tag: $TAG"; exit 1; }
           [ "$(gh release view "$TAG" --json isDraft --jq .isDraft)" = true ] || { echo "::error::$TAG is not a draft release (published releases are immutable)"; exit 1; }
       - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8  # v4.2.2
+        id: attest
         with:
-          subject-path: sbom/*.spdx.json
+          subject-path: |
+            sbom/*.spdx.json
+            sbom/FPP-Backup-*.tar.gz
+      - name: Signature files for the release
+        env:
+          BUNDLE: ${{ steps.attest.outputs.bundle-path }}
+        run: |
+          name="FPP-Backup-${TAG:-${GITHUB_SHA::12}}"
+          cp "$BUNDLE" "sbom/$name.sigstore.json"
+          jq -c '.dsseEnvelope' "$BUNDLE" > "sbom/$name.intoto.jsonl"
+          ls -l sbom
       - name: Attach to the draft
         if: inputs.tag != ''
-        run: gh release upload "$TAG" sbom/*.spdx.json --clobber
+        run: gh release upload "$TAG" sbom/* --clobber

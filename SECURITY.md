@@ -2,7 +2,27 @@
 
 ## Reporting a vulnerability
 
-Please report security problems privately, not in a public issue: use **Security → Report a vulnerability** on this repository (GitHub private vulnerability reporting). Include what you found, how to reproduce it and what an attacker could do with it. You'll get a reply as soon as I can look at it; this is a one-person hobby project, so allow a few days.
+Please report security vulnerabilities privately, never in a public issue, pull request or discussion: use **[Security → Report a vulnerability](https://github.com/SRipaldi/FPP-Backup/security/advisories/new)** (GitHub private vulnerability reporting). Only the maintainer can see the report.
+
+Include what you found, the version or commit, how to reproduce it, and what an attacker could do with it. A proof of concept helps but isn't required.
+
+## What happens next
+
+| Step | Timeline |
+|---|---|
+| Acknowledgement that the report arrived | within 7 days |
+| Assessment: confirmed or not, and severity (CVSS) | within 14 days |
+| Fix released, for a confirmed vulnerability | critical or high: within 30 days; medium or low: within 90 days |
+| Public disclosure | when the fix is released, or after 90 days, whichever is first, coordinated with you |
+
+You'll get updates in the private advisory as it progresses. Fixes are published as a new release with a GitHub security advisory (and a CVE where one applies), crediting you unless you'd rather not be named. This is a one-person project, so if a deadline slips you'll hear why rather than silence.
+
+Good-faith research is welcome: test against your own installation, don't access other people's controllers or data, and give us the chance to fix before disclosing. We won't pursue or support legal action against research done that way.
+
+## Out of scope
+
+- Vulnerabilities in FPP, xLights or the FPP firmware itself: report those to [FPP](https://github.com/FalconChristmas/fpp/security) or [xLights](https://github.com/xLightsSequencer/xLights) directly.
+- Running the web UI on a network interface other than 127.0.0.1, or turning on xLights' automation port and leaving it on, against the guidance below.
 
 ## What this tool trusts, and what it doesn't
 
@@ -21,4 +41,4 @@ Please report security problems privately, not in a public issue: use **Security
 
 ## Supported versions
 
-Only the latest commit on `main`.
+Security fixes go into the latest release and `main`. Older releases are not patched: upgrade to the latest.

@@ -1,0 +1,7 @@
+# Fuzzing only (.github/workflows/fuzz.yml); the tool itself installs nothing.
+# Pinned by version and hash: pip --require-hashes refuses anything else. The hash is the
+# CPython 3.13 manylinux x86_64 wheel's, from PyPI, checked against a download. Atheris 3.1.0
+# was released 2026-06-17 (well past the 14-day cooldown). To update: same rules as
+# .github/scripts/fetch-tool.sh.
+atheris==3.1.0 \
+    --hash=sha256:f8a9f51ce8369026e8eb7b7174835e8c4c85a1a6db5d9add36c15100779d2a39

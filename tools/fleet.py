@@ -309,15 +309,31 @@ def load_policy(path=POLICY):
 
 
 def validate_policy(policy):
-    """Check a policy's shape and return it normalised. Raises ValueError.
+    """Check a policy's shape and return it normalised. Raises ValueError, and only ValueError: the policy comes
+    from the Settings page, and the UI server answers a ValueError as a refused request, while any other exception
+    would drop the request unanswered. A field of the wrong type (a list where a number belongs, a number where an
+    object belongs, an infinite number) is a malformed policy like any other.
 
     A match rule is {"value", "player"?, "equivalent"?, "min_version"?, "why"?}.
     "player" is the player's own expected value when it differs from the
     remotes, or "*" to leave the player unchecked; the older "master_value"
     is read as "player"."""
+    try:
+        return _validate_policy(policy)
+    except (TypeError, AttributeError, OverflowError, KeyError, IndexError) as e:
+        raise ValueError(f"policy is malformed: a field has the wrong type or value ({type(e).__name__}: {e})")
+
+
+def _validate_policy(policy):
     if not isinstance(policy, dict):
         raise ValueError("policy must be an object")
-    secret = re.compile(policy.get("secret_pattern") or "pass|psk|secret|token|key", re.I)
+    pattern = policy.get("secret_pattern") or "pass|psk|secret|token|key"
+    if not isinstance(pattern, str) or len(pattern) > 500:
+        raise ValueError("secret_pattern must be a regular expression (text, up to 500 characters)")
+    try:
+        secret = re.compile(pattern, re.I)
+    except re.error as e:  # a bad pattern from the Settings page is a refused policy, not a server error
+        raise ValueError(f"secret_pattern is not a valid regular expression: {e}")
 
     def text(v, what):
         if not isinstance(v, (str, int, float)) or isinstance(v, bool):
