@@ -139,7 +139,7 @@ class Run(unittest.TestCase):
         self.assertEqual(f.reboots, 2, "only one extra reboot")
 
     def test_fpp_update_that_quiets_fppd_is_rebooted_not_failed(self):
-        # The Porch case: an fpp update applies, then takes fppd (and its progress feed) down to restart its
+        # Seen on a BeagleBone Black remote: an fpp update applies, then takes fppd (and its progress feed) down to restart its
         # services and does not reboot on its own. The tool must read the quiet feed as "restarting" and reboot
         # to finish — not call it a failure and leave fppd stopped.
         f = self.fake(mode="fpp-restart")
@@ -317,8 +317,8 @@ class VerifyPlugins(unittest.TestCase):
     """The 'Plugins must be reinstalled' warning is expected after an OS upgrade and should read that way."""
 
     def state(self, **over):
-        s = {"version": "10.3", "host": "FPP-master", "fppd": "running", "mode": "player", "os_level": "2026-10b",
-             "ipv4": ["172.1.2.10"], "gateway": "", "outputs": {}, "sequences": [], "playlists": [], "settings": {},
+        s = {"version": "10.3", "host": "player", "fppd": "running", "mode": "player", "os_level": "2026-10b",
+             "ipv4": ["10.0.0.10"], "gateway": "", "outputs": {}, "sequences": [], "playlists": [], "settings": {},
              "warnings": [], "plugins": [], "colorlight": False}
         s.update(over)
         return s

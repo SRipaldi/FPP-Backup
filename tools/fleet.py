@@ -8,11 +8,11 @@ chrony.conf and restarts chrony), and only on the hosts named.
 Usage:
   tools/fleet.py audit [--master <player-ip>] [--json]   # player defaults to config/settings.json
   tools/fleet.py drift [--json]               # every unit vs config/fleet-policy.json
-  tools/fleet.py set ntpServer master --hosts FPP-Side,FPP-Roof
+  tools/fleet.py set ntpServer master --hosts remote1,remote2
   tools/fleet.py set Latitude <latitude> --hosts all
-  tools/fleet.py gateway policy --hosts FPP-Roof   # save the policy's gateway (applies at next reboot)
+  tools/fleet.py gateway policy --hosts remote1   # save the policy's gateway (applies at next reboot)
   tools/fleet.py restart --hosts all          # fppd only; skips units that are playing
-  tools/fleet.py reboot --hosts FPP-Perm
+  tools/fleet.py reboot --hosts remote1
 """
 import argparse
 import concurrent.futures
@@ -355,7 +355,7 @@ def validate_policy(policy):
     for r in ((policy.get("network") or {}).get("gateway") or []):
         if not isinstance(r, dict) or not re.match(r"^\d{1,3}(\.\d{1,3}){2}$", str(r.get("subnet", ""))) \
                 or not IPV4_RE.match(str(r.get("gateway", ""))):
-            raise ValueError('network.gateway entries look like {"subnet": "192.168.1", "gateway": "192.168.1.1"}')
+            raise ValueError('network.gateway entries look like {"subnet": "10.0.0", "gateway": "10.0.0.1"}')
         gw_rules.append({"subnet": r["subnet"], "gateway": r["gateway"]})
     out = {"_comment": policy.get("_comment", ""),
            "fpp_version": text(policy.get("fpp_version", ""), "fpp_version"), "match": match,

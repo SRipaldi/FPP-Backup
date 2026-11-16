@@ -16,7 +16,7 @@ Not affiliated with or endorsed by the Falcon Player (FPP) project. "FPP" and "F
 
 ## Status
 
-Working and in use on an 11-controller show (Raspberry Pi 4, BeagleBone Black with KulpLights capes, PocketBeagle 2; FPP 8.5.1 and 10.3).
+Working and in use on a multi-controller show (Raspberry Pi 4, BeagleBone Black with KulpLights capes, PocketBeagle 2; FPP 8.5.1 and 10.3).
 
 - Proven end to end: an FPP 8.5.1 BeagleBone rebuilt onto a 10.3 card with the old card kept as a rollback; it booted with its static address, settings, outputs and all sequences, and passed `tools/verify_unit.py`.
 - Card images have been built and booted for BeagleBone Black (BBB images). Raspberry Pi and BB64 images go through the same code but haven't been built and booted yet. Flashing works for any FPP image.
@@ -79,7 +79,7 @@ Tick controllers, tick **Media** for the ones whose sequences, music and video y
 ### Fleet Management > Fleet
 Every controller compared with the fleet policy. Red cells differ from the expected value.
 - Tick drifting settings and press **Update checked**: each setting is written to just the controllers that differ, one at a time, then the players that need it are restarted (any that are playing are skipped) and the fleet is rescanned. **Apply** on a row does the same for one setting.
-- **Gateway** is checked too: each controller's default gateway against a rule per network (`172.1.2.x → 172.1.2.1`), first match wins for a controller on two networks. Until you press **Keep these rules** (or add `network.gateway` to the policy), the rules are inferred from what most controllers use. **Apply** saves the gateway through FPP's network API; it takes effect at the controller's next reboot, so a running show isn't disturbed. The Dashboard also flags a gateway that changed since the controller's last backup, which is how one lost in an upgrade shows up.
+- **Gateway** is checked too: each controller's default gateway against a rule per network (`10.0.0.x → 10.0.0.1`), first match wins for a controller on two networks. Until you press **Keep these rules** (or add `network.gateway` to the policy), the rules are inferred from what most controllers use. **Apply** saves the gateway through FPP's network API; it takes effect at the controller's next reboot, so a running show isn't disturbed. The Dashboard also flags a gateway that changed since the controller's last backup, which is how one lost in an upgrade shows up.
 - Click a red value to make it the expected one instead, or use **Remotes that disagree** to promote a setting into the policy. These edit the policy only.
 - The Controllers table shows each unit's FPP version, available updates (a newer release, and newer patches on its own branch), clock offset, uptime and storage.
 - **Upgrade to <version>…** (shown when a newer release is out) upgrades controllers in place, without a new card. It first checks each one: whether it can reach GitHub, free space, whether it's playing or an update is already running, its last backup, and old OS images left in its Uploads folder. It then says what the release notes say about the OS level (for 10.4: optional, kernel and security patches) and suggests the smaller FPP update unless the OS level is required. Tick controllers and press **Upgrade checked**: any without a backup from the last 24 hours are offered one first. Controllers are upgraded one at a time, the player last, and the run stops at the first problem. For each one it refuses while the show plays or if the next scheduled playlist starts before it could finish, records the controller's state, starts FPP's own update and follows its progress (a failure, 20 minutes without progress or a timeout stops it), reboots and waits, then compares: version, outputs, sequences, playlists, addresses, gateway, settings, FPP warnings and the ColorLight receiver. Controllers that can't reach GitHub (on a show network whose gateway doesn't route to the internet) get the release's OS image for their board instead: downloaded to this Mac once and checked against GitHub's SHA-256, uploaded through the player, applied, and deleted afterwards. **Check only** runs every check and the comparison without starting anything. **Clean up OS images…** lists the .fppos images (1-1.3 GB each) that FPP leaves in each controller's Uploads folder after an OS upgrade and deletes the ones you tick; a controller with an update running is skipped. An OS upgrade run from this app deletes its own image afterwards. A new card (Build card) stays the way back if an upgrade goes wrong, and the way to a fresh install.
@@ -179,7 +179,7 @@ snapshots/                    backups (gitignored; contain secrets)
 work/                         images, staging, builds, caches, logs (gitignored)
 ```
 
-See [AGENTS.md](AGENTS.md) for development and setup notes for AI coding agents, and [FPP-Backup-handoff.md](FPP-Backup-handoff.md) for the original plan (historical; much of it changed).
+See [AGENTS.md](AGENTS.md) for development and setup notes for AI coding agents.
 
 ## Contributing and security
 

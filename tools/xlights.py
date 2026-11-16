@@ -20,9 +20,9 @@ folder's .fseq is from an older render.
 
 Usage:
   tools/xlights.py status
-  tools/xlights.py push rgb-24-Beetlejuice.fseq --hosts FPP-Tree[,FPP-Roof]
-  tools/xlights.py push <name>.fseq --hosts FPP-Tree --render   # re-render first
-  tools/xlights.py versions --hosts all|FPP-Tree,FPP-Roof
+  tools/xlights.py push song.fseq --hosts remote1[,remote2]
+  tools/xlights.py push <name>.fseq --hosts remote1 --render   # re-render first
+  tools/xlights.py versions --hosts all|remote1,remote2
 """
 import argparse
 import concurrent.futures

@@ -36,6 +36,8 @@ tools/xlights.py      pushes sequences to controllers through xLights' automatio
 tools/upgrade.py      in-place upgrades: plan (read-only), run (one unit at a time, follow, reboot, verify);
                       images / cleanup (leftover .fppos in Uploads); the Fleet page's dialogs run it as jobs.
                       Upgrade output is filtered: an OS upgrade prints ~50,000 file lines (froze the Jobs tab)
+tools/check_public.py finds this installation's names/addresses, secrets and personal data in what would be
+                      published (staged changes, commit messages, PR/release text, pushes); installs git hooks
 tests/                unittest suite; fake_fpp.py is a pretend controller for the upgrade's write paths
 tools/colorlight.py   ColorLight receiver health from each controller's syslog/fppd.log tails; history in
                       work/cache/colorlight.json; the monitor checks it every 5 min (Show > ColorLight)
@@ -43,9 +45,21 @@ tools/colorlight.py   ColorLight receiver health from each controller's syslog/f
 
 Pure vs network: `fleet.scan_fleet()` talks to controllers (about 30 s); `fleet.evaluate(scan, policy)` is pure and is re-run on every request, so policy edits and previews need no rescan. Keep that split. `fleet.scan_one()` is one unit's part of a scan; the server's `fleet/rescan` action merges it into the cached scan. Reading settings dominates (~15 s per unit): FPP has no bulk read of values and answers one request at a time, so more concurrency does not help.
 
+## This repository is public: no environment details, secrets or personal information
+
+Everything that leaves this machine is public: commits, commit messages, pull requests, release notes, issues, code comments, tests and docs. None of it may describe the installation this tool runs. That covers controller names (also the short forms people say, like "the Gazebo unit"), IP addresses and subnets, show, playlist and sequence names, Wi-Fi network names, location, time zone and incident stories tied to a named unit. It also covers secrets (passwords, Wi-Fi keys, tokens, private keys) and personal information (email addresses, anything identifying the owner beyond LICENSE and CODEOWNERS).
+
+- **Write generically**: "the player", "a remote", "a BeagleBone Black remote", `remote1`, `10.0.0.x`, `song.fseq`, `fpp.local`. Board models and FPP versions are fine. So is "seen on a PocketBeagle2, 10.3 -> 10.4". Naming which unit it was is not.
+- **Check before every publish**: `tools/check_public.py` finds this installation's names and addresses (read from its own git-ignored `config/` and `snapshots/`, so the list is never published), anything in `config/private-terms.txt`, and secrets and email addresses by pattern. It also refuses any file under `snapshots/`, `work/`, `config/` or `fpp-issues/`.
+  - `tools/check_public.py --install-hooks` once per clone. The hooks then check every commit, every commit message and every push.
+  - Before opening a PR or a release, check the text itself: `tools/check_public.py --text pr-body.md` (or `release-notes.md`), and `--log origin/main..HEAD` for what a push would add.
+  - `--all` checks every tracked file.
+- **A finding blocks the publish.** Replace the detail; don't bypass the hook. `--no-verify` is only for a finding that has been looked at twice and is genuinely not private.
+- **Already published is not "too late"**: if something slips out, edit the PR or release text, scrub the files in a new commit, and tell the owner, who decides whether history needs rewriting.
+
 ## How to check a change
 
-`python3 -m unittest discover -s tests` runs the tests (stdlib only, about 30 s): the in-place upgrade against a fake controller, including failure, stall, no-return and lost-content cases. There is no other suite; otherwise verify the way this repo has been verified:
+`python3 -m unittest discover -s tests` runs the tests (stdlib only, about 80 s): the in-place upgrade against a fake controller, including failure, stall, no-return and lost-content cases, and `tools/check_public.py` against a made-up installation. Run `tools/check_public.py --all` too (see the section above). There is no other suite; otherwise verify the way this repo has been verified:
 
 - Syntax: `python3 -c "import ast; ast.parse(open('ui/server.py').read())"` and `node --check ui/static/app.js`.
 - Server: run it on a spare port (`--no-browser --no-monitor --port 8798`), call the endpoint with `curl`; every `/api/` request (GET too, except job streams) needs the per-run token from the page's `<meta name="token">` in an `X-Token` header, and a local `Host`.
@@ -76,7 +90,7 @@ The fleet is a real, running light show.
 
 - **Settings**: `/api/settings` is the schema. Only entries with a `"type"` are user settings; the rest (Platform, *Directory, locale, ...) are computed and must never be written into a settings file. The live API reports schema defaults for unset keys. A checkbox with no value is off; a select's default is the option whose label contains `(Default)`. The real settings file is in the newest FPP backup JSON (`settings.system_settings[0]`); FPP makes a backup automatically when settings are saved.
 - **Secrets**: FPP 8.5's API returns `osPassword` and `TetherPSK` in plain text; 10.x hides passwords. The drift report filters names matching `secret_pattern`; keep secrets out of anything the UI shows or Git tracks.
-- **FPP 10.x first boot**: `fppinit start` runs `handleBootPartition` (copies `/boot/firmware/fpp/*` once), `checkHostName`, then later `handleBootActions` and `setupNetwork`. Do **not** set `BootActions = "settings"` on a built card: on FPP-Side it stalled `fppinit start` until the 60 s watchdog killed it, so network setup never ran (`fpp-issues/04-boot-actions-stall.md`). The build applies what that action would (NTP server in `chrony.conf`, service links) to the image instead.
+- **FPP 10.x first boot**: `fppinit start` runs `handleBootPartition` (copies `/boot/firmware/fpp/*` once), `checkHostName`, then later `handleBootActions` and `setupNetwork`. Do **not** set `BootActions = "settings"` on a built card: on one remote it stalled `fppinit start` until the 60 s watchdog killed it, so network setup never ran (`fpp-issues/04-boot-actions-stall.md`). The build applies what that action would (NTP server in `chrony.conf`, service links) to the image instead.
 - **10.x setup page** appears until `LegalJurisdiction` and the privacy settings exist; `stage_card.py` fills missing ones from a unit already on the target version.
 - **Time zones**: 10.x images (Debian 13) lack backward names such as `US/Pacific`; FPP silently stays on UTC. `stage_card.py` maps them.
 - **Gateway in the fleet scan**: `network_info()` reads `/api/network/gateway`, `/dns` and the interface list; `gateway_row()` adds a drift row named `gateway` (kind `network`, not an FPP setting) from `policy.network.gateway` rules, or rules inferred from the fleet. `POST /api/network/gateway` only saves the file; it applies when the network next comes up. An in-place 8.5→10.3 upgrade dropped the per-interface gateway on two units.

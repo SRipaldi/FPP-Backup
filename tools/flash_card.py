@@ -16,7 +16,7 @@ plus the partition table must match the image byte for byte.
 
 Usage:
   tools/flash_card.py --list
-  tools/flash_card.py work/out/FPP-Side-10.3.img disk4 [--yes] [--no-verify]
+  tools/flash_card.py work/out/<host>-10.3.img disk4 [--yes] [--no-verify]
 """
 import argparse
 import hashlib
