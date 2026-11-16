@@ -309,12 +309,22 @@ def load_policy(path=POLICY):
 
 
 def validate_policy(policy):
-    """Check a policy's shape and return it normalised. Raises ValueError.
+    """Check a policy's shape and return it normalised. Raises ValueError, and only ValueError: the policy comes
+    from the Settings page, and the UI server answers a ValueError as a refused request, while any other exception
+    would drop the request unanswered. A field of the wrong type (a list where a number belongs, a number where an
+    object belongs, an infinite number) is a malformed policy like any other.
 
     A match rule is {"value", "player"?, "equivalent"?, "min_version"?, "why"?}.
     "player" is the player's own expected value when it differs from the
     remotes, or "*" to leave the player unchecked; the older "master_value"
     is read as "player"."""
+    try:
+        return _validate_policy(policy)
+    except (TypeError, AttributeError, OverflowError, KeyError, IndexError) as e:
+        raise ValueError(f"policy is malformed: a field has the wrong type or value ({type(e).__name__}: {e})")
+
+
+def _validate_policy(policy):
     if not isinstance(policy, dict):
         raise ValueError("policy must be an object")
     pattern = policy.get("secret_pattern") or "pass|psk|secret|token|key"

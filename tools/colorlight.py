@@ -118,10 +118,14 @@ def syslog_time(line, tz):
     m = re.match(r"^(\w{3} [ \d]\d \d\d:\d\d:\d\d) ", line)
     if m:
         now = time.time()
+        year = datetime.now().year
         try:
-            d = datetime.strptime(f"{datetime.now().year} {m.group(1)}", "%Y %b %d %H:%M:%S")
-        except ValueError:  # "Feb 30", "Xyz 01"
-            return None, tz
+            d = datetime.strptime(f"{year} {m.group(1)}", "%Y %b %d %H:%M:%S")
+        except ValueError:
+            try:  # Feb 29 read in a non-leap year: last year's (a leap year) line
+                d = datetime.strptime(f"{year - 1} {m.group(1)}", "%Y %b %d %H:%M:%S")
+            except ValueError:  # "Feb 30", "Xyz 01"
+                return None, tz
         t = d.replace(tzinfo=timezone.utc).timestamp() - tz
         return (t - 365 * 86400 if t > now + 86400 else t), tz
     return None, tz

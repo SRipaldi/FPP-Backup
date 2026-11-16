@@ -26,6 +26,25 @@ class SyslogTimes(unittest.TestCase):
         events, first, last, _ = colorlight.parse_syslog("2026-13-45T03:04:05-08:00 fpp kernel: eth0: Link is Down\n", 0)
         self.assertEqual((events, first, last), ([], None, None))
 
+    def test_feb_29_in_a_non_leap_year_is_last_years(self):
+        import datetime as dt
+        real = colorlight.datetime
+
+        class Fixed(dt.datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return real(2029, 3, 1, 12, 0, 0)
+        real_time = colorlight.time.time
+        colorlight.datetime = Fixed
+        colorlight.time.time = lambda: real(2029, 3, 1, 12, 0, 0, tzinfo=dt.timezone.utc).timestamp()
+        try:
+            t, _ = colorlight.syslog_time("Feb 29 03:04:05 fpp kernel: x", 0)
+        finally:
+            colorlight.datetime = real
+            colorlight.time.time = real_time
+        self.assertIsNotNone(t)
+        self.assertEqual(dt.datetime.fromtimestamp(t, dt.timezone.utc).strftime("%Y-%m-%d"), "2028-02-29")
+
     def test_fppd_log_with_a_bad_time_is_skipped(self):
         events, first, _ = colorlight.parse_fppd("2026-01-02 25:04:05.123 fppd(1) Found 1 ColorLight receiver\n"
                                                  "2026-01-02 03:04:06.12 fppd(1) Found 2 ColorLight receiver\n", 0)
@@ -40,6 +59,37 @@ class PolicyPattern(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "secret_pattern", msg=repr(bad)):
                 fleet.validate_policy({"match": {}, "secret_pattern": bad})
         self.assertEqual(fleet.validate_policy({"match": {}, "secret_pattern": "pass|psk"})["secret_pattern"], "pass|psk")
+
+    def test_any_type_confusion_is_a_value_error(self):
+        # Every field of the real template swapped for a value of the wrong type: only ValueError may come out.
+        import copy
+        import json
+        template = json.loads((Path(__file__).resolve().parent.parent / "templates/fleet-policy.json").read_text())
+        wrong = [[1], 1, 1e999, None, {"x": 1}, "text", True]
+
+        def paths(obj, at=()):
+            yield at
+            if isinstance(obj, dict):
+                for k, v in obj.items():
+                    yield from paths(v, at + (k,))
+
+        tried = 0
+        for at in paths(template):
+            for w in wrong:
+                pol = copy.deepcopy(template)
+                if not at:
+                    pol = w
+                else:
+                    node = pol
+                    for k in at[:-1]:
+                        node = node[k]
+                    node[at[-1]] = w
+                try:
+                    fleet.validate_policy(pol)
+                except ValueError:
+                    pass
+                tried += 1
+        self.assertGreater(tried, 100)
 
 
 if __name__ == "__main__":

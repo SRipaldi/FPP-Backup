@@ -5,7 +5,8 @@
 #   sbom-fpp-backup.spdx.json      this repository (standard library only; recorded for completeness)
 #   FPP-Backup-<tag>.tar.gz        the source at the tag (git archive), so a download can be verified
 #   FPP-Backup-<tag>.sigstore.json the signature bundle (build provenance) covering all of the above
-#   FPP-Backup-<tag>.intoto.jsonl  the same provenance as an in-toto statement
+#   FPP-Backup-<tag>.intoto.jsonl  the same signed provenance as a DSSE envelope (the in-toto attestation
+#                                  format SLSA tools publish; its payload is the in-toto statement)
 #
 # Releases are immutable once published, so this runs against a DRAFT release:
 #   gh release create vX.Y.Z --draft ...   then   gh workflow run sbom.yml -f tag=vX.Y.Z

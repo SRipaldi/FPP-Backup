@@ -85,7 +85,11 @@ def status():
 def fseq_header(path):
     """Render ID and frame count from a .fseq header (v2: ID at byte 24)."""
     with open(path, "rb") as f:
-        h = f.read(32)
+        return parse_fseq_header(f.read(32), path)
+
+
+def parse_fseq_header(h, path="<data>"):
+    """fseq_header's parsing of the first 32 bytes. Raises ValueError for anything that isn't an FSEQ header."""
     if h[:4] != b"PSEQ" or len(h) < 32:
         raise ValueError(f"{path} is not an FSEQ file")
     return {"id": str(struct.unpack("<Q", h[24:32])[0]) if h[7] >= 2 else None,

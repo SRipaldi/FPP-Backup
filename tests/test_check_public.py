@@ -69,6 +69,23 @@ class CheckPublic(unittest.TestCase):
         with contextlib.redirect_stderr(io.StringIO()):
             self.assertEqual(self.run_main("--text", str(f)), 1)
 
+    def test_all_skips_binary_files_but_checks_odd_text(self):
+        import subprocess
+        root = Path(self.tmp.name)
+        subprocess.run(["git", "init", "-q", str(root)], check=True)
+        (root / "icon.png").write_bytes(b"\x89PNG\r\n\x1a\n\x00\x00 FPP-Gazebo")   # binary: skipped
+        (root / "notes.txt").write_bytes(b"caf\xe9 on FPP-Gazebo\n")                 # Latin-1 text: checked
+        subprocess.run(["git", "-C", str(root), "add", "-A"], check=True)
+        import contextlib, io
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            self.assertEqual(self.run_main("--all"), 1)
+        self.assertIn("notes.txt", err.getvalue())
+        self.assertNotIn("icon.png", err.getvalue())
+        # The staged diff holds the non-UTF-8 bytes too: the pre-commit check must read it, not crash.
+        with contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(self.run_main("--staged"), 1)
+
     def run_main(self, *argv):
         saved = sys.argv
         sys.argv = ["check_public.py", *argv]

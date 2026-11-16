@@ -1,6 +1,6 @@
 # The unit tests (python3 -m unittest discover -s tests: the in-place upgrade against a fake
 # controller, the SD-card selection, the public-repo leak check) on the oldest supported Python,
-# a current one, and macOS's own python3, which the owner runs. Standard library only: nothing is
+# a current one, and Apple's /usr/bin/python3 on macOS, which the owner runs. Standard library only: nothing is
 # installed. Also checks every tracked file for secrets and personal data (tools/check_public.py;
 # a CI checkout has no installation config, so only the generic patterns apply there).
 #
@@ -28,7 +28,7 @@ jobs:
         include:
           - { label: "Python 3.9", os: ubuntu-24.04, python: "3.9" }
           - { label: "Python 3.13", os: ubuntu-24.04, python: "3.13" }
-          - { label: "macOS python3", os: macos-15, python: "" }
+          - { label: "macOS /usr/bin/python3", os: macos-15, python: "" }
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
@@ -38,8 +38,10 @@ jobs:
         with:
           python-version: ${{ matrix.python }}
       - name: Unit tests
+        env:
+          # On macOS, Apple's own python3 (3.9, as the owner runs it), not the runner's newer one on PATH.
+          PY: ${{ matrix.python == '' && '/usr/bin/python3' || 'python3' }}
         run: |
-          python3 --version
-          python3 -m unittest discover -s tests -v
-      - name: Secrets and personal data in tracked files
-        run: python3 tools/check_public.py --all
+          "$PY" --version
+          "$PY" -m unittest discover -s tests -v
+          "$PY" tools/check_public.py --all

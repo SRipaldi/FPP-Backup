@@ -4,7 +4,7 @@
   syslog         controller syslog / fppd.log text   (colorlight.parse_syslog, parse_fppd)
   release-notes  GitHub release notes                (upgrade.os_advice, notes_head)
   rootfs         controller settings -> shell script (stage_card.rootfs_script; must stay injection-free)
-  fseq           sequence file headers               (xlights.fseq_header)
+  fseq           sequence file headers               (xlights.parse_fseq_header)
   policy         the fleet policy JSON from the UI   (fleet.validate_policy)
   leak-check     any text checked before publishing  (check_public.scan_text; catastrophic regex time)
 
@@ -17,12 +17,10 @@ Without Atheris (no install needed) it runs the same checks on random inputs, as
   python3 fuzz/fuzz.py <target> --selftest [iterations]
 """
 import json
-import os
 import random
 import re
 import shlex
 import sys
-import tempfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "tools"))
@@ -93,16 +91,10 @@ def t_rootfs(data):
 
 
 def t_fseq(data):
-    fd, path = tempfile.mkstemp(suffix=".fseq")
     try:
-        os.write(fd, data)
-        os.close(fd)
-        try:
-            xlights.fseq_header(path)
-        except ValueError:
-            pass  # documented: not an FSEQ file
-    finally:
-        os.unlink(path)
+        xlights.parse_fseq_header(data[:32])
+    except ValueError:
+        pass  # documented: not an FSEQ file
 
 
 def t_policy(data):
@@ -161,7 +153,8 @@ def main():
     fn = TARGETS[sys.argv[1]]
     if "--selftest" in sys.argv:
         i = sys.argv.index("--selftest")
-        return selftest(fn, int(sys.argv[i + 1]) if len(sys.argv) > i + 1 else 20000)
+        n = sys.argv[i + 1] if len(sys.argv) > i + 1 else ""
+        return selftest(fn, int(n) if n.isdigit() else 20000)
     if not atheris:
         sys.exit("atheris is not installed (CI installs a pinned copy); use --selftest locally")
     atheris.Setup([sys.argv[0]] + sys.argv[2:], fn)

@@ -95,7 +95,7 @@ The fleet is a real, running light show.
 | ShellCheck, hadolint | The shell scripts and the builder Dockerfile, which CodeQL can't read | `.github/workflows/lint.yml`, every PR |
 | OSV-Scanner | SCA: the builder container exactly as `build_image.sh` builds it (`tools/builder/Dockerfile`), and bb-imager's `Cargo.lock` at the pinned commit | `.github/workflows/security-scans.yml`, weekly + PRs touching them |
 | OpenSSF Scorecard | Repository posture: branch protection, pinning, signing, token permissions | same workflow, weekly; a score table on the run's summary page |
-| Unit tests | `tests/` on Python 3.9, 3.13 and macOS's python3, plus `check_public.py --all` | `.github/workflows/tests.yml`, every PR (required) |
+| Unit tests | `tests/` on Python 3.9, 3.13 and Apple's `/usr/bin/python3` (the one the owner runs), plus `check_public.py --all` | `.github/workflows/tests.yml`, every PR (required) |
 | Atheris (libFuzzer) | Fuzzing the parsers of untrusted input: controller logs, release notes, settings that become shell, FSEQ headers, the policy, the leak check's regexes (`fuzz/fuzz.py`) | `.github/workflows/fuzz.yml`, 1 min per target on PRs touching `tools/`, 10 min weekly |
 | Syft | Signed SPDX SBOMs plus a signed source archive attached to each release | `.github/workflows/sbom.yml`, run against the draft release |
 | Dependabot | Version bumps for the base image and the pinned actions; security alerts | `.github/dependabot.yml` |
@@ -106,14 +106,14 @@ The fleet is a real, running light show.
 
 **No open alert at any severity.** Severity is not risk, so a low or medium finding is fixed like a high one: update, replace or remove the component. The only exception is a finding with no fix anywhere (no patched version, no alternative): dismiss it in code scanning as "won't fix" with the reason and the date to look again, never silently. The weekly scan is the check that this holds.
 
-CodeQL and OSV-Scanner results land in Security > Code scanning, one category per tool. Scorecard's program has no SARIF output (only its third-party action does), so its table is on the run's summary page. Dependabot alerts stay empty by design: the tool has no package manifests (fuzzing's pinned Atheris is the only Python package, and CI-only), which is why the builder image is scanned directly.
+CodeQL and OSV-Scanner results land in Security > Code scanning, one category per tool. Scorecard's program has no SARIF output (only its third-party action does), so its table is on the run's summary page. The tool itself has no package manifests, which is why the builder image is scanned directly. The one manifest is `fuzz/requirements.txt` (Atheris, CI-only): Dependabot alerts and updates cover it, and an alert there falls under the same no-open-alert rule.
 
 **Trust model for CI**, after third-party action compromises (tj-actions/changed-files, trivy-action) in which a moved tag shipped malicious code:
 - **No third-party GitHub Actions.** The repository allows only GitHub-owned actions, and workflows pin even those by full commit SHA, with the version in a comment. Dependabot proposes updates after a 14-day cooldown.
 - **Scanners are release binaries, pinned by version and SHA-256** in `.github/scripts/fetch-tool.sh`; the one Python package, Atheris for fuzzing, is pinned by version and hash in `fuzz/requirements.txt` (`pip --require-hashes`). Those are the only places third-party code enters CI. A pin is chosen only from a release at least 14 days old, and only when GitHub's recorded asset digest and the publisher's checksum file agree. To update one, change the version and the hash together, from both sources, and review it like code.
 - **Least privilege.** Every workflow starts from `permissions: {}` or `contents: read`, and checkout never keeps credentials. A job that runs a third-party scanner holds only a read-only token and no secrets. Writing results (`security-events: write`), signing (`id-token`, `attestations`) and attaching to a release (`contents: write`) happen in separate jobs that run only GitHub's own actions and the gh CLI.
 - **No secrets in CI.** Nothing in this repository's Actions needs one; keep it that way.
-- **Release process with SBOMs**: `gh release create vX.Y.Z --draft --verify-tag ...`, then `gh workflow run sbom.yml -f tag=vX.Y.Z`, wait for it, check the assets (three `sbom-*.spdx.json`, `FPP-Backup-vX.Y.Z.tar.gz`, and its `.sigstore.json` and `.intoto.jsonl` signatures), then publish (`gh release edit vX.Y.Z --draft=false --latest`). Published releases are immutable.
+- **Release process with SBOMs**: `gh release create vX.Y.Z --draft --verify-tag ...`, then `gh workflow run sbom.yml -f tag=vX.Y.Z`, wait for it, check the assets (three `sbom-*.spdx.json`, `FPP-Backup-vX.Y.Z.tar.gz`, and its `.sigstore.json` bundle and `.intoto.jsonl` DSSE envelope of the signed provenance), then publish (`gh release edit vX.Y.Z --draft=false --latest`). Published releases are immutable.
 
 ## FPP facts this code depends on
 
