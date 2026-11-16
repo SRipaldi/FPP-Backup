@@ -33,9 +33,14 @@ images lists the .fppos OS images left in each controller's Uploads folder
 (FPP keeps them after an OS upgrade; each is 1-1.3 GB); cleanup deletes them,
 skipping a controller while an update runs there.
 """
+# Snyk Code flags every controller address and file path these tools take from the command line or the
+# network. Contacting the controllers you name, and the release images GitHub lists, is their job; names and
+# URLs that reach file paths are checked (name_ok, ASSET_RE) before use.
+# file deepcode ignore Ssrf: operator-named controllers on the LAN, and GitHub release assets
+# file deepcode ignore PT: asset names are checked against ASSET_RE and confined to FPPOS_DIR
 import argparse
+import collections
 import concurrent.futures
-import hashlib
 import json
 import re
 import secrets
@@ -139,12 +144,26 @@ def release(target=None):
         r = max(rels, key=lambda r: fleet._vkey(r["tag_name"]))
     fleet.UPDATE_CACHE.parent.mkdir(parents=True, exist_ok=True)
     fleet.UPDATE_CACHE.write_text(json.dumps(cache))
+    # Only plain image names from GitHub's own download host: the name becomes a file name on this Mac and on the
+    # controller, and the URL is fetched by both.
     assets = {a["name"]: {"url": a["browser_download_url"], "size": a["size"],
                           "sha256": (a.get("digest") or "").removeprefix("sha256:") or None}
-              for a in r.get("assets", []) if a["name"].endswith(".fppos")}
+              for a in r.get("assets", []) if asset_ok(a.get("name"), a.get("browser_download_url"))}
     body = r.get("body") or ""
     return {"tag": r["tag_name"], "published": r.get("published_at"), "url": r.get("html_url"),
             "assets": assets, "os": os_advice(body), "notes_head": notes_head(body)}
+
+
+ASSET_RE = re.compile(r"^[A-Za-z0-9][\w.\-]*\.fppos$")
+
+
+def asset_ok(name, url):
+    return bool(ASSET_RE.match(name or "")) and str(url or "").startswith("https://github.com/")
+
+
+def os_is_64bit(os_version):
+    """FPP writes the architecture into OSVersion in more than one spelling (64bit, 64-bit, 64 bit)."""
+    return "64bit" in (os_version or "").replace("-", "").replace(" ", "").lower()
 
 
 def os_advice(body):
@@ -177,7 +196,7 @@ def board_family(info):
     if "beaglebone" in text or "pocketbeagle" in text:
         return "BBB"
     if "raspberry" in text:
-        return "Pi64" if "64bit" in (info.get("OSVersion") or "").replace("-", "").replace(" ", "") else "Pi"
+        return "Pi64" if os_is_64bit(info.get("OSVersion")) else "Pi"
     return None
 
 
@@ -228,7 +247,7 @@ def unit_plan(u, rel, now):
     fam = board_family(info)
     root = ((info.get("Utilization") or {}).get("Disk") or {}).get("Root") or {}
     p.update(version=info.get("Version"), platform=info.get("SubPlatform") or info.get("Platform"), family=fam,
-             os_level=os_level(info.get("OSVersion")), arch="64-bit" if "64bit" in (info.get("OSVersion") or "") else "32-bit",
+             os_level=os_level(info.get("OSVersion")), arch="64-bit" if os_is_64bit(info.get("OSVersion")) else "32-bit",
              root_free=root.get("Free"))
     if fleet._vkey(p["version"]) >= fleet._vkey(rel["tag"]):
         p["blockers"].append(f"already on {p['version']}")
@@ -257,11 +276,16 @@ def unit_plan(u, rel, now):
     p["fppos"] = fppos_for(fam, rel["assets"])
     size = rel["assets"].get(p["fppos"], {}).get("size") if p["fppos"] else None
     p["method"] = "fpp" if p["internet"] and not p.get("major") else "os" if p["internet"] else "os-push"
+    # Whether an OS upgrade could run here, worked out whatever the planned method: the user can still choose
+    # the OS upgrade where the FPP update would do (run --os), and it needs the same image and space then.
+    p["os_space"] = None
+    if p["fppos"] and root.get("Free") is not None and root["Free"] < 2 * size:
+        p["os_space"] = f"needs {2 * size / 1e9:.1f} GB free for the OS image, has {root['Free'] / 1e9:.1f} GB"
     if p["method"] != "fpp":
         if not p["fppos"]:
             p["blockers"].append(f"no {rel['tag']} OS image for this board ({fam or 'unknown'})")
-        elif root.get("Free") is not None and root["Free"] < 2 * size:
-            p["blockers"].append(f"needs {2 * size / 1e9:.1f} GB free for the OS image, has {root['Free'] / 1e9:.1f} GB")
+        elif p["os_space"]:
+            p["blockers"].append(p["os_space"])
     p["minutes"] = ESTIMATE["fpp" if p["method"] == "fpp" else "os"].get(fam, 40)
     try:
         ups = fleet.fetch_json(f"{base}/api/files/Uploads", timeout=10).get("files", [])
@@ -370,8 +394,19 @@ def cleanup(master, hosts):
 
 # ---------------------------------------------------------------- before / after
 
-def capture(u):
-    """What an upgrade must not change (or must change: the version)."""
+def capture(u, tries=4):
+    """What an upgrade must not change (or must change: the version). Read right after a reboot, a controller
+    can answer 503 for a moment (its web server is up, fppd not yet), so a 503 means read it all again."""
+    for i in range(tries):
+        try:
+            return _capture(u)
+        except urllib.error.HTTPError as e:
+            if e.code != 503 or i == tries - 1:
+                raise
+            time.sleep(2)
+
+
+def _capture(u):
     b = u["base"]
     info = fleet.fetch_json(f"{b}/api/system/info", timeout=15)
     st = fleet.fetch_json(f"{b}/api/fppd/status", timeout=15)
@@ -483,7 +518,7 @@ def stream(u, path, label):
     arrives. It runs on in its own thread: FPP finishes the upgrade even if the
     connection drops (the player's proxy may cut a long request), and progress
     is followed through updateActivity regardless."""
-    state = {"error": None, "lines": [], "hidden": 0}
+    state = {"error": None, "lines": collections.deque(maxlen=40), "hidden": 0}
 
     def run():
         try:
@@ -500,7 +535,7 @@ def stream(u, path, label):
                         text = ln.decode("utf-8", "replace").rstrip()
                         if not text:
                             continue
-                        state["lines"] = (state["lines"] + [text])[-40:]
+                        state["lines"].append(text)
                         if SHOW.search(text) and not NOISE.search(text):
                             say(f"    | {text}")
                         else:
@@ -535,8 +570,10 @@ def follow(u, before, method, out):
             misses = 0
         except Exception:
             misses += 1
-            if started and method != "fpp":
-                return "rebooting"               # an OS upgrade reboots on its own; losing it means it has begun
+            if started and method != "fpp" and misses >= 6:
+                # an OS upgrade reboots on its own, so a minute or more of silence means it has begun. One missed
+                # reply is not enough: mid-copy the board can be too busy to answer through the player's proxy.
+                return "rebooting"
             if started and progressed and method == "fpp" and misses >= 9:
                 # an fpp update stops fppd and its progress feed to restart its services at the end; losing the
                 # feed for ~90 s after the update has already made progress means it is finishing, not failing.
@@ -574,16 +611,18 @@ def follow(u, before, method, out):
             raise RuntimeError(f"still running after {limit // 60} minutes (stage: {last_stage})")
 
 
-def wait_restart(u, since, limit, method):
+def wait_restart(u, since, limit, method, reboot_sent=True):
     """Wait until the controller has rebooted (its uptime restarted) and fppd runs."""
     t0 = time.time()
     say(f"  waiting for {u['host']} to restart (up to {limit // 60} min)")
-    back = None
+    back, answering = None, False
     while time.time() - t0 < limit:
         time.sleep(LIMITS["poll"])
         try:
             st = fleet.fetch_json(f"{u['base']}/api/fppd/status", timeout=8, tries=1)
+            answering = True
         except Exception:
+            answering = False
             print(f"\r  restarting… {int(time.time() - t0)} s", end="", flush=True)
             continue
         up = st.get("systemUptimeTotalSeconds")
@@ -595,6 +634,11 @@ def wait_restart(u, since, limit, method):
                 return
             if time.time() - back > LIMITS["fppd"]:
                 raise FppdDown(u, LIMITS["fppd"] // 60, st.get("fppd"))
+    if answering and back is None:
+        # It answered all along; it just never rebooted. Not "did not rejoin the network".
+        raise RuntimeError(f"{u['host']} is answering but did not reboot within {limit // 60} min (its uptime never "
+                           "restarted)" + ("" if reboot_sent else "; the reboot request failed")
+                           + f". Reboot it from FPP's UI, then confirm with `tools/upgrade.py recheck --hosts {u['host']}`.")
     raise NotReturned(u, limit // 60, method)
 
 
@@ -623,20 +667,22 @@ def startup_failed(u):
 
 def send_reboot(u):
     """POST a reboot, riding over a transient 503 (the proxy or the controller's web server can be momentarily
-    unavailable while services cycle). wait_restart follows either way; a persistent failure is only a warning."""
+    unavailable while services cycle). wait_restart follows either way; a persistent failure is only a warning.
+    Returns whether the request was accepted."""
     for i in range(5):
         try:
             fpp_http.request(f"{u['base']}/api/system/reboot", timeout=15, method="POST", data=b"")
-            return
+            return True
         except urllib.error.HTTPError as e:
             if e.code == 503 and i < 4:
                 time.sleep(1)
                 continue
             say(f"  WARN: the reboot request returned {e.code}; waiting in case it reboots anyway")
-            return
+            return False
         except Exception as e:
+            # A dropped connection here usually means the reboot began before FPP answered.
             say(f"  WARN: couldn't send the reboot cleanly ({str(e)[:80]}); waiting in case it reboots on its own")
-            return
+            return True
 
 
 def check_startup(u, method):
@@ -645,8 +691,8 @@ def check_startup(u, method):
     if startup_failed(u):
         say("  FPP's startup (fppinit) did not finish on this boot; rebooting once more to let it complete")
         since = time.time()
-        send_reboot(u)
-        wait_restart(u, since, LIMITS["reboot_fpp"], method)
+        sent = send_reboot(u)
+        wait_restart(u, since, LIMITS["reboot_fpp"], method, reboot_sent=sent)
         if startup_failed(u):
             raise RuntimeError("FPP's startup (fppinit) failed again after a second reboot: check the controller's system log")
         say("  FPP's startup finished on the second boot")
@@ -654,23 +700,34 @@ def check_startup(u, method):
 
 def fetch_fppos(name, asset):
     """The .fppos image on this Mac, downloaded once and checked against GitHub's SHA-256."""
+    import get_image
+    if not ASSET_RE.match(name or ""):
+        raise RuntimeError(f"unexpected OS image name {str(name)[:60]!r}")
     FPPOS_DIR.mkdir(parents=True, exist_ok=True)
     path = FPPOS_DIR / name
-    if path.exists() and path.stat().st_size == asset["size"] and (not asset["sha256"] or sha256(path) == asset["sha256"]):
+    if path.exists() and path.stat().st_size == asset["size"] and (not asset["sha256"] or get_image.sha256_of(path) == asset["sha256"]):
         say(f"  {name}: already downloaded, checksum OK")
         return path
-    import get_image
+    if not str(asset.get("url") or "").startswith("https://github.com/"):
+        raise RuntimeError(f"{name}: not a GitHub download URL ({str(asset.get('url'))[:60]})")
     say(f"  downloading {name} ({asset['size'] / 1e9:.2f} GB)")
     get_image.download(asset["url"], path, asset["size"], asset["sha256"])
     return path
 
 
-def sha256(path):
-    h = hashlib.sha256()
-    with open(path, "rb") as f:
-        for b in iter(lambda: f.read(1 << 20), b""):
-            h.update(b)
-    return h.hexdigest()
+def remove_after_failure(u, name):
+    """After a failed OS upgrade, delete its 1-1.3 GB image from Uploads, unless FPP is still using it."""
+    later = f"delete it later with `tools/upgrade.py cleanup --hosts {u['host']}`"
+    try:
+        if name not in {i["name"] for i in uploads_images(u)}:
+            return
+        if activity(u).get("inProgress"):
+            say(f"  {name} left in Uploads: an update is still running there; {later}")
+            return
+    except Exception:
+        say(f"  {name} may still be in Uploads ({u['host']} isn't answering); {later}")
+        return
+    remove_upload(u, name)
 
 
 class Multipart:
@@ -742,6 +799,8 @@ def run_unit(u, p, rel, master, use_os, dry):
     target = rel["tag"]
     if method != "fpp" and not p.get("fppos"):
         raise RuntimeError(f"{target} has no OS image for this board ({p.get('family') or 'unknown'}): use the FPP update")
+    if method != "fpp" and p.get("os_space"):
+        raise RuntimeError(p["os_space"] + (": use the FPP update" if p["method"] == "fpp" else ""))
     say(f"\n=== {u['host']} ({p.get('platform')}, {p['version']} -> {target}, {method}) ===")
     guard_show(master, p["minutes"])
     say("  recording the current state (outputs, content, network, settings)…")
@@ -752,28 +811,36 @@ def run_unit(u, p, rel, master, use_os, dry):
         say("  dry run: nothing started; comparing the state with itself")
         post = pre
     else:
-        image = None
-        if method == "os-push":
-            image = fetch_fppos(p["fppos"], rel["assets"][p["fppos"]])
-            upload(u, image)
-            guard_show(master, p["minutes"])
-        before = activity(u)
-        since = time.time()
-        if method == "fpp":
-            out = stream(u, f"upgradefpp.php?wrapped=1&version={urllib.parse.quote(target)}", "upgrade")
-        else:
-            src = p["fppos"] if method == "os-push" else rel["assets"][p["fppos"]]["url"]
-            out = stream(u, f"upgradeOS.php?wrapped=1&os={urllib.parse.quote(src, safe='')}", "OS upgrade")
-        result = follow(u, before, method, out)
-        if method == "fpp":
-            # An fpp update does not reboot on its own, and on a slow board fppd may not come back until it does;
-            # always reboot to finish, whether the update reported done or went quiet while restarting its services.
-            say("  update applied; rebooting to finish" if result == "restarting" else "  upgrade complete; rebooting")
-            send_reboot(u)
-        wait_restart(u, since, LIMITS["reboot_fpp" if method == "fpp" else "reboot_os"], method)
-        check_startup(u, method)
-        post = capture(u)
-        if method != "fpp":  # FPP leaves the image in Uploads whether it downloaded it or we sent it
+        image_there = False  # the .fppos is (or may be) in the controller's Uploads: ours, or FPP's own download
+        try:
+            if method == "os-push":
+                image = fetch_fppos(p["fppos"], rel["assets"][p["fppos"]])
+                image_there = True  # set before the upload: a failed upload can leave a partial file
+                upload(u, image)
+                guard_show(master, p["minutes"])
+            before = activity(u)
+            since = time.time()
+            if method == "fpp":
+                out = stream(u, f"upgradefpp.php?wrapped=1&version={urllib.parse.quote(target)}", "upgrade")
+            else:
+                image_there = True
+                src = p["fppos"] if method == "os-push" else rel["assets"][p["fppos"]]["url"]
+                out = stream(u, f"upgradeOS.php?wrapped=1&os={urllib.parse.quote(src, safe='')}", "OS upgrade")
+            result = follow(u, before, method, out)
+            sent = True
+            if method == "fpp":
+                # An fpp update does not reboot on its own, and on a slow board fppd may not come back until it does;
+                # always reboot to finish, whether the update reported done or went quiet while restarting its services.
+                say("  update applied; rebooting to finish" if result == "restarting" else "  upgrade complete; rebooting")
+                sent = send_reboot(u)
+            wait_restart(u, since, LIMITS["reboot_fpp" if method == "fpp" else "reboot_os"], method, reboot_sent=sent)
+            check_startup(u, method)
+            post = capture(u)
+        except (Exception, SystemExit):  # SystemExit: get_image.download on a bad checksum
+            if image_there:
+                remove_after_failure(u, p["fppos"])
+            raise
+        if image_there:  # FPP leaves the image in Uploads whether it downloaded it or we sent it
             remove_upload(u, p["fppos"])
     results = verify(u, pre, post, target if not dry else str(pre["version"]), os_upgrade=(method != "fpp" and not dry))
     for level, name, detail in results:
@@ -858,7 +925,7 @@ def main():
     args = ap.parse_args()
     if not args.master:
         sys.exit("no player: pass --master or set it on the Settings page")
-    hosts = [h for h in (args.hosts or "").split(",") if h] or None
+    hosts = list(dict.fromkeys(h for h in (args.hosts or "").split(",") if h)) or None  # each once, in order
     if hosts and not all(name_ok(h) for h in hosts):
         sys.exit("bad controller name")
     if args.cmd == "images":

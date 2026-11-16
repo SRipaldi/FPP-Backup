@@ -13,6 +13,7 @@ survives log rotation. Read-only against the controllers.
 
 Usage: python3 tools/colorlight.py [--master <player-ip>] [--host <name>]
 """
+# file deepcode ignore Ssrf: operator-named FPP controllers on the show LAN; contacting them is this tool's job
 import argparse
 import json
 import re

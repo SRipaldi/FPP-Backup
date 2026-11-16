@@ -9,6 +9,7 @@ Usage:
   tools/verify_unit.py snapshots/<host>/<ts> --via <player-ip> <unit-ip> \\
       [--stage work/stage/<host>]
 """
+# file deepcode ignore Ssrf: operator-named FPP controllers on the show LAN; contacting them is this tool's job
 import argparse
 import hashlib
 import json

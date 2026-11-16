@@ -160,6 +160,59 @@ class Run(unittest.TestCase):
         self.assertIn("Power-cycle", err)
         self.assertIn("recheck --hosts FakeUnit", err)
 
+    def test_os_upgrade_rides_over_a_missed_progress_check(self):
+        # Mid-copy the board can miss a progress read or two; that is not the reboot starting.
+        f = self.fake(mode="os-blip")
+        _, err, out = self.go(f, use_os=True)
+        self.assertIsNone(err, out)
+        # Before the fix the first missed read ended follow() as "rebooting", so FPP's own Rebooting stage never showed.
+        self.assertIn("stage: Rebooting", out, "follow() kept following after the missed reads")
+
+    def test_os_upgrade_chosen_over_fpp_still_needs_the_space(self):
+        f = self.fake()
+        f.root_free = 1e9
+        p, err, _ = self.go(f, release(1e9), use_os=True)
+        self.assertEqual((p["method"], p["blockers"]), ("fpp", []), "the FPP update itself is not blocked")
+        self.assertIn("needs 2.0 GB free", err)
+        self.assertFalse(any(r[1].startswith("/upgrade") for r in f.requests))
+
+    def test_failed_os_push_removes_its_image(self):
+        f = self.fake(platform="BeagleBone Black", sub="TI AM335x BeagleBone Black", os_version="v2026-10b (32bit)",
+                      internet=False, mode="fail")
+        upgrade.FPPOS_DIR.mkdir(parents=True)
+        (upgrade.FPPOS_DIR / "BBB-10.4_2026-11.fppos").write_bytes(b"x" * 300000)
+        _, err, out = self.go(f, release(300000))
+        self.assertIn("failed", err)
+        self.assertEqual(f.uploads, {}, "the uploaded image is deleted after a failure too\n" + out)
+
+    def test_refused_reboot_is_not_reported_as_off_the_network(self):
+        f = self.fake(mode="reboot-refused")
+        _, err, _ = self.go(f)
+        self.assertIn("did not reboot", err)
+        self.assertIn("the reboot request failed", err)
+        self.assertNotIn("rejoin", err)
+
+    def test_arch_and_image_agree_on_a_hyphenated_64_bit(self):
+        f = self.fake(os_version="v2026-10b (64-bit)")
+        p = upgrade.unit_plan(f.unit(), release(), time.time())
+        self.assertEqual((p["family"], p["arch"], p["fppos"]), ("Pi64", "64-bit", "Pi64-10.4_2026-11.fppos"))
+
+    def test_discover_ignores_malformed_announced_names(self):
+        import fleet
+        f = self.fake()
+        f.systems = [{"hostname": "../../evil", "address": "127.0.0.2"}, {"hostname": "Good", "address": "127.0.0.3"}]
+        hosts = {u["host"] for u in fleet.discover(f.addr)}
+        self.assertIn("Good", hosts)
+        self.assertNotIn("../../evil", hosts)
+
+    def test_only_plain_github_images_are_accepted(self):
+        gh = "https://github.com/FalconChristmas/fpp/releases/download/10.4/"
+        self.assertTrue(upgrade.asset_ok("Pi64-10.4_2026-11.fppos", gh + "Pi64-10.4_2026-11.fppos"))
+        self.assertFalse(upgrade.asset_ok("../Pi64-10.4.fppos", gh + "x"))
+        self.assertFalse(upgrade.asset_ok("Pi64-10.4.fppos", "https://example.com/Pi64-10.4.fppos"))
+        with self.assertRaises(RuntimeError):
+            upgrade.fetch_fppos("../../escape.fppos", {"size": 1, "sha256": None, "url": gh})
+
     def test_copied_file_paths_are_not_shown(self):
         for line in ("usr/share/vim/vim91/autoload/htmlcomplete.vim", "var/log/apache2/error.log",
                      'rsync: [generator] chown "/mnt/boot/firmware/tispl.bin" failed: Operation not permitted (1)'):

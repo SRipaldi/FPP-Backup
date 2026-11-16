@@ -9,6 +9,8 @@ Usage:
   tools/get_image.py 10.3 FPP-v10.3-BBB.img.zip
   tools/get_image.py 10.3 --platform "BeagleBone Black"
 """
+# file deepcode ignore Ssrf: downloads FPP release images from GitHub, checked against GitHub's SHA-256
+# file deepcode ignore PT: paths are the operator's own command-line arguments; zip members are reduced to a bare name
 import argparse
 import hashlib
 import json

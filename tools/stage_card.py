@@ -39,6 +39,7 @@ Usage:
   tools/stage_card.py snapshots/FPP-Side/<ts> work/stage/FPP-Side \\
       [--reference snapshots/FPP-Porch/<ts>]
 """
+# file deepcode ignore PT: paths are the operator's own arguments; the output folder is replaced only if it is a stage
 import argparse
 import json
 import os

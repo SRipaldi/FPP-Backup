@@ -20,6 +20,7 @@ Usage:
   tools/snapshot.py http://<unit-ip>                   # direct
   tools/snapshot.py --via <player-ip> <unit-ip>       # through the player's proxy
 """
+# file deepcode ignore Ssrf: operator-named FPP controllers on the show LAN; contacting them is this tool's job
 import argparse
 import hashlib
 import json

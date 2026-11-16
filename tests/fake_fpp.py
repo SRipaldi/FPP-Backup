@@ -6,7 +6,9 @@ couple of seconds instead of minutes), reboot (it stops answering for a
 moment, then reports a fresh uptime), uploads, and the "before/after"
 reads. `mode` makes it misbehave: "fail", "stall", "lose-sequence", "no-return",
 "startup-fails-once" (FPP's startup times out on the first boot after the
-upgrade, as seen on a PocketBeagle2), "startup-fails" (on every boot).
+upgrade, as seen on a PocketBeagle2), "startup-fails" (on every boot),
+"fppd-down", "fpp-restart", "os-blip" (two progress reads fail mid-upgrade),
+"reboot-refused" (the reboot request returns 500 and nothing reboots).
 """
 import json
 import re
@@ -27,6 +29,9 @@ class FakeFPP:
         self.act = {"inProgress": False, "op": "", "runId": "old", "stage": "", "logSize": 100, "failed": False}
         self.fppd_state = "running"   # fppd/status reports this; a reboot can leave it "stopped" (see mode fppd-down)
         self.activity_503 = False     # when set, updateActivity 503s, as fppd does while an fpp update restarts it
+        self.activity_misses = 0      # the next N updateActivity reads 503 (a busy board, a slow proxy)
+        self.root_free = 30e9
+        self.systems = []             # what /api/fppd/multiSyncSystems lists
         self.requests = []
         self.syslog = ["systemd[1]: Starting fppinit.service - Inialization routines for FPP...",
                        "systemd[1]: Started fppinit.service - Inialization routines for FPP."]
@@ -83,6 +88,8 @@ class FakeFPP:
                 self.act["stage"] = st
                 self.act["logSize"] += 50
                 lines.append(st)
+                if self.mode == "os-blip" and st == stages[0]:
+                    self.activity_misses = 2
             if self.mode == "fail":
                 self.act.update(inProgress=False, failed=True, stage="Upgrade Failed")
                 return
@@ -129,6 +136,11 @@ class FakeFPP:
                 if self.down():
                     return
                 path, _, q = self.path.partition("?")
+                if path == "/api/system/updateActivity" and fake.activity_misses > 0:
+                    fake.activity_misses -= 1
+                    self.send_response(503)
+                    self.end_headers()
+                    return
                 if path == "/api/system/updateActivity" and fake.activity_503:
                     self.send_response(503)
                     self.end_headers()
@@ -138,7 +150,8 @@ class FakeFPP:
                     "/api/system/info": {"HostName": "FakeUnit", "Version": fake.version, "Branch": "v" + fake.version,
                                          "Mode": "remote", "Platform": fake.platform, "SubPlatform": fake.sub,
                                          "OSVersion": fake.os_version,
-                                         "Utilization": {"Disk": {"Root": {"Free": 30e9, "Total": 32e9}}}},
+                                         "Utilization": {"Disk": {"Root": {"Free": fake.root_free, "Total": 32e9}}}},
+                    "/api/fppd/multiSyncSystems": {"systems": fake.systems},
                     "/api/fppd/status": {"status_name": "playing" if fake.playing else "idle", "fppd": fake.fppd_state,
                                          "systemUptimeTotalSeconds": up,
                                          "scheduler": {"nextPlaylist": {"playlistName": "Show", "scheduledStartTime": fake.next_show}
@@ -187,6 +200,8 @@ class FakeFPP:
                     fake.uploads[m.group(1).decode()] = len(data)
                     return self.send_json(["ok"])
                 self.rfile.read(n)
+                if path == "/api/system/reboot" and fake.mode == "reboot-refused":
+                    return self.send_json({"status": "error"}, 500)
                 if path == "/api/system/reboot":
                     fake.activity_503 = False   # the reboot brings fppd (and its feed) back
                     fake.reboot(0.2)

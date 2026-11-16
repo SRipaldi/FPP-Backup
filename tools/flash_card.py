@@ -18,6 +18,8 @@ Usage:
   tools/flash_card.py --list
   tools/flash_card.py work/out/FPP-Side-10.3.img disk4 [--yes] [--no-verify]
 """
+# file deepcode ignore CommandInjection: BB_IMAGER_CLI is the operator's own setting; run as an argument list, no shell
+# file deepcode ignore PT: image paths are the operator's own command-line arguments
 import argparse
 import hashlib
 import os

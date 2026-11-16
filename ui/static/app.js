@@ -656,7 +656,7 @@ async function pollLive() {
 // recommendation the release notes support), and whether to back up first.
 let UPG = null;
 const upgPicked = new Set();
-let upgKind = null, upgBackup = "first";
+let upgKind = null, upgBackup = "first", upgSingle = null;
 const UPG_KIND = {
   fpp: ["FPP update", "FPP fetches the release from GitHub and rebuilds itself on the controller, then reboots. Keeps the operating system it has."],
   os: ["OS upgrade", "The controller downloads the release's OS image and replaces its whole system, which comes with the new FPP already built in, then reboots. Longer; sometimes the final reboot needs a power cycle."],
@@ -683,8 +683,13 @@ async function openUpgrade(refresh, pick) {
     UPG.units.filter((u) => upgReady(u) && (pick === "all" || u.host === pick)).forEach((u) => upgPicked.add(u.host));
     upgKind = null;
     upgBackup = "first";
+    upgSingle = pick !== "all" ? pick : null;
+  } else {
+    // "Check again": keep the choice, minus any controller that is now blocked (playing, updating, gone)
+    const ready = new Set(UPG.units.filter(upgReady).map((u) => u.host));
+    [...upgPicked].filter((h) => !ready.has(h)).forEach((h) => upgPicked.delete(h));
   }
-  renderUpgrade(pick && pick !== "all" ? pick : null);
+  renderUpgrade(upgSingle);
 }
 $("#upg-open").onclick = () => openUpgrade(false, "all");
 $("#upg-refresh").onclick = () => openUpgrade(true);
@@ -717,14 +722,14 @@ function renderUpgrade(single) {
 
   // 2. kind of upgrade, recommended from the release notes
   const required = A.required === true || picks.some((u) => u.method === "os");
-  const noImage = picks.filter((u) => !u.fppos);
+  const noImage = picks.filter((u) => !u.fppos || u.os_space);  // no image for the board, or no room for it
   const rec = required ? "os" : "fpp";
   if (!upgKind || (required && upgKind === "fpp") || (noImage.length && upgKind === "os" && !required)) upgKind = rec;
   const off = (k) => (required && k === "fpp") || (!required && k === "os" && noImage.length > 0);
   const why = {
     fpp: A.required === false ? `The ${esc(R.tag)} release notes say the OS level (${esc(A.from || "")} → ${esc(A.level || "")}) is optional: kernel updates and security patches, nothing ${esc(R.tag)} needs. The FPP update is quicker and keeps the system you have; do the OS level after the season, or with a fresh card.`
       : "The smaller change: the release notes don't say an OS upgrade is needed.",
-    os: !required && noImage.length ? `Not available: ${esc(R.tag)} has no OS image for ${noImage.map((u) => esc(u.host)).join(", ")}.` : required ? `Required: ${A.required === true ? `the release notes say ${esc(R.tag)} needs OS level ${esc(A.level || "")}` : "a new major version needs the OS upgrade"}.`
+    os: !required && noImage.length ? `Not available: ${noImage.map((u) => `${esc(u.host)} ${u.fppos ? esc(u.os_space) : `has no ${esc(R.tag)} OS image`}`).join("; ")}.` : required ? `Required: ${A.required === true ? `the release notes say ${esc(R.tag)} needs OS level ${esc(A.level || "")}` : "a new major version needs the OS upgrade"}.`
       : `Optional${A.level ? ` (OS level ${esc(A.level)}: kernel and security patches)` : ""}. The image already contains FPP ${esc(R.tag)}, so no separate FPP update follows.`,
   };
   $("#upg-kind").innerHTML = ["fpp", "os"].map((k) => `<label class="${off(k) ? "offline" : ""}"><input type="radio" name="upg-kind" value="${k}" ${upgKind === k ? "checked" : ""} ${off(k) ? "disabled" : ""}>

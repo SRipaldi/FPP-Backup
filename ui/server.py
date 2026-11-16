@@ -342,7 +342,7 @@ def act_upgrade(body):
     plan, not the request."""
     plan = upgrade_plan()
     rows = {u["host"]: u for u in plan["units"]}
-    hosts = [str(h) for h in body.get("hosts") or []]
+    hosts = list(dict.fromkeys(str(h) for h in body.get("hosts") or []))  # each once: a repeat would re-run it
     if not hosts:
         raise ValueError("no controllers selected")
     for h in hosts:
@@ -352,6 +352,8 @@ def act_upgrade(body):
             raise ValueError(f"{h}: {'; '.join(rows[h]['blockers'])}")
         if body.get("os") and not rows[h].get("fppos"):
             raise ValueError(f"{h}: FPP {plan['release']['tag']} has no OS image for its board; choose the FPP update")
+        if body.get("os") and rows[h].get("os_space"):
+            raise ValueError(f"{h}: {rows[h]['os_space']}; choose the FPP update")
     target = plan["release"]["tag"]
     if body.get("target") and body["target"] != target:
         raise ValueError(f"the plan is for {target}, not {body['target']}: refresh it")
