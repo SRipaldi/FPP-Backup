@@ -1,0 +1,5 @@
+{
+  // No infrastructure-as-code here. Snyk's IaC scan reads every JSON file, and the
+  // controller snapshots contain files whose whole content is `null`, which crash it.
+  "snyk.features.infrastructureAsCode": false
+}
