@@ -2,10 +2,12 @@
 
 Run: python3 -m unittest discover -s tests
 """
+import os
 import sys
 import unittest
 from pathlib import Path
 
+os.environ["FPP_BACKUP_KEYCHAIN"] = "off"  # tests never touch the Keychain (see tools/fpp_http.py)
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "tools"))
 import colorlight  # noqa: E402
 import fleet  # noqa: E402
@@ -91,6 +93,22 @@ class PolicyPattern(unittest.TestCase):
                 tried += 1
         self.assertGreater(tried, 100)
 
+
+
+class KeychainOff(unittest.TestCase):
+    def test_off_applies_even_when_set_after_import(self):
+        # Test modules load alphabetically; fpp_http is imported (through fleet) before test_upgrade sets the
+        # variable. Read at import, the upgrade tests would have used the real "FPP-Backup" Keychain entries.
+        import os
+        import fpp_http
+        saved = os.environ.get("FPP_BACKUP_KEYCHAIN")
+        try:
+            os.environ["FPP_BACKUP_KEYCHAIN"] = "FPP-Backup"
+            os.environ["FPP_BACKUP_KEYCHAIN"] = "off"
+            self.assertFalse(fpp_http.available())
+            self.assertIsNone(fpp_http.keychain_get("never-cached-account"))
+        finally:
+            os.environ["FPP_BACKUP_KEYCHAIN"] = saved if saved is not None else "off"
 
 if __name__ == "__main__":
     unittest.main()

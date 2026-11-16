@@ -5,7 +5,7 @@ FPP's UI password (Settings > UI password) is HTTP Basic authentication, user
 Every tool reaches controllers through request() here, so they all send it.
 
 Passwords live in the login Keychain, service "FPP-Backup" (FPP_BACKUP_KEYCHAIN
-overrides it, for tests): account "default" for every controller, and
+overrides it; "off" means no Keychain at all, which the tests use): account "default" for every controller, and
 "host:<HostName>" for one controller (its address is looked up in the
 inventory). Nothing is written to config/ or anywhere else on disk.
 
@@ -28,7 +28,10 @@ import urllib.request
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-SERVICE = os.environ.get("FPP_BACKUP_KEYCHAIN", "FPP-Backup")
+def service():
+    """The Keychain service, read at each use (not at import), so a test that sets FPP_BACKUP_KEYCHAIN after
+    another module imported this one still never touches the real entries."""
+    return os.environ.get("FPP_BACKUP_KEYCHAIN", "FPP-Backup")
 USER = "admin"
 INVENTORY = ROOT / "config/fleet-inventory.json"
 
@@ -36,14 +39,16 @@ _cache = {}  # account -> password or None; Keychain lookups cost a process each
 
 
 def available():
-    return shutil.which("security") is not None
+    # "off": never call the Keychain. Tests set it: on a headless machine (CI) a Keychain query can wait
+    # forever for an unlock prompt nobody can answer.
+    return service() != "off" and shutil.which("security") is not None
 
 
 def keychain_get(account):
     if account not in _cache:
         pw = None
         if available():
-            r = subprocess.run(["security", "find-generic-password", "-s", SERVICE, "-a", account, "-w"],
+            r = subprocess.run(["security", "find-generic-password", "-s", service(), "-a", account, "-w"],
                                capture_output=True, text=True)
             pw = r.stdout.rstrip("\n") if r.returncode == 0 else None
         _cache[account] = pw
@@ -56,7 +61,7 @@ def keychain_set(account, password):
     # -U updates an existing item. The password goes on the command line, which
     # other processes of this user could see for an instant; that is how the
     # security tool takes it non-interactively.
-    r = subprocess.run(["security", "add-generic-password", "-U", "-s", SERVICE, "-a", account,
+    r = subprocess.run(["security", "add-generic-password", "-U", "-s", service(), "-a", account,
                         "-l", f"FPP-Backup ({account})", "-w", password], capture_output=True, text=True)
     if r.returncode:
         raise RuntimeError(f"Keychain refused the password: {r.stderr.strip()[:120]}")
@@ -65,7 +70,7 @@ def keychain_set(account, password):
 
 def keychain_delete(account):
     if available():
-        subprocess.run(["security", "delete-generic-password", "-s", SERVICE, "-a", account],
+        subprocess.run(["security", "delete-generic-password", "-s", service(), "-a", account],
                        capture_output=True)
     _cache.pop(account, None)
 
