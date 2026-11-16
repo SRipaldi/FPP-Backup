@@ -5,6 +5,7 @@ Thanks for looking. This is a personal project that's open for others to use and
 - **Issues** are welcome: bugs, questions, FPP versions or hardware that don't work.
 - **Pull requests**: fork the repo, make your change on a branch and open a PR against `main`. Every PR needs the owner's review before it's merged; `main` can't be pushed to directly.
 - Keep to the project's constraints: Python standard library only (3.9-compatible), plain JavaScript with no build step, and nothing that writes to a controller without the user asking. [AGENTS.md](AGENTS.md) has the architecture and the checks to run.
+- **Tests are required.** A new feature comes with tests for it, and a bug fix comes with a test that fails without the fix. Tests go in `tests/` and use the standard library's `unittest`. Run `python3 -m unittest discover -s tests` and `tools/check_public.py --all` before opening a PR. CI runs both on Python 3.9, 3.13 and macOS, and a PR can't merge until they pass.
 - Never include anything from `config/`, `snapshots/` or `work/`: they hold your addresses, passwords and Wi-Fi keys.
 - Keep your own show out of everything you publish: commits, commit messages, PR text, code comments and tests. That means no controller names, IP addresses, show or song names, and no secrets or personal information. Write "the player", "a remote", `10.0.0.x`. Run `tools/check_public.py --install-hooks` once; it then checks every commit and push against your own installation's names and addresses.
 - Security problems: see [SECURITY.md](SECURITY.md) instead of opening an issue.
