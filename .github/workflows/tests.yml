@@ -1,0 +1,45 @@
+# The unit tests (python3 -m unittest discover -s tests: the in-place upgrade against a fake
+# controller, the SD-card selection, the public-repo leak check) on the oldest supported Python,
+# a current one, and macOS's own python3, which the owner runs. Standard library only: nothing is
+# installed. Also checks every tracked file for secrets and personal data (tools/check_public.py;
+# a CI checkout has no installation config, so only the generic patterns apply there).
+#
+# Trust model (see AGENTS.md "CI and scanning"): GitHub-owned actions pinned by commit SHA,
+# read-only token, no secrets.
+name: Tests
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  unittest:
+    name: Tests (${{ matrix.label }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { label: "Python 3.9", os: ubuntu-24.04, python: "3.9" }
+          - { label: "Python 3.13", os: ubuntu-24.04, python: "3.13" }
+          - { label: "macOS python3", os: macos-15, python: "" }
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0  # v7.1.0
+        if: matrix.python != ''
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Unit tests
+        run: |
+          python3 --version
+          python3 -m unittest discover -s tests -v
+      - name: Secrets and personal data in tracked files
+        run: python3 tools/check_public.py --all

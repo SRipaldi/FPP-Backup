@@ -1,0 +1,110 @@
+{
+  "_comment": "Template for config/fleet-policy.json, used when an installation has none. '@player' values are replaced with the player's own setting when the policy is created, so a new fleet starts out matching its player. Edit the result on the Fleet page.",
+  "fpp_version": "@player",
+  "match": {
+    "TimeZone": {
+      "value": "@player",
+      "why": "Same clock everywhere (US/Pacific is missing on 10.x images)"
+    },
+    "ntpServer": {
+      "value": "@master",
+      "player": "",
+      "why": "Remotes sync time from the player; the player from the internet pool"
+    },
+    "Latitude": {
+      "value": "@player",
+      "why": "Sunrise/sunset schedule times"
+    },
+    "Longitude": {
+      "value": "@player",
+      "why": "Sunrise/sunset schedule times"
+    },
+    "Locale": {
+      "value": "@player",
+      "why": "Holiday list used by schedules"
+    },
+    "temperatureInF": {
+      "value": "@player",
+      "why": "Display units"
+    },
+    "LegalJurisdiction": {
+      "value": "@player",
+      "min_version": 10,
+      "why": "10.x setup page"
+    },
+    "statsPublish": {
+      "value": "@player",
+      "why": "Privacy"
+    },
+    "ShareCrashData": {
+      "value": "@player",
+      "why": "Privacy"
+    },
+    "FetchVendorLogos": {
+      "value": "@player",
+      "why": "Privacy"
+    },
+    "SendVendorSerial": {
+      "value": "@player",
+      "why": "Privacy"
+    },
+    "passwordEnable": {
+      "value": "@player",
+      "why": "Same UI access everywhere"
+    },
+    "osPasswordEnable": {
+      "value": "@player",
+      "why": "Same OS access everywhere"
+    },
+    "uiLevel": {
+      "value": "@player",
+      "why": "Same UI options everywhere"
+    }
+  },
+  "compare": [
+    "Service_rsync",
+    "Service_smbd_nmbd",
+    "Service_vsftpd",
+    "bootDelay",
+    "blankBetweenSequences",
+    "MultiSyncCopySequences",
+    "MultiSyncMulticast",
+    "MultiSyncUnicast",
+    "MultiSyncBroadcast",
+    "MultiSyncRefreshStatus",
+    "AutoEnableOutputs",
+    "alwaysTransmit",
+    "MediaBackend",
+    "LogLevel_General",
+    "ScheduleSeconds",
+    "DisableScheduler",
+    "verbosePlaylistItemDetails"
+  ],
+  "per_unit": [
+    "HostName",
+    "HostDescription",
+    "fppMode",
+    "AudioOutput",
+    "AudioMixerDevice",
+    "ForceAudioId",
+    "VideoOutput",
+    "InstalledCape",
+    "LEDDisplayType",
+    "piRTC",
+    "EnableTethering",
+    "TetherSSID",
+    "ClockDate",
+    "ClockTime",
+    "FPP_UUID",
+    "MultiSyncExtraRemotes",
+    "MultiSyncRemotes",
+    "storageDevice",
+    "volume",
+    "AudioCardType",
+    "AudioCard0Type",
+    "UnpartitionedSpace",
+    "LastBlock"
+  ],
+  "coverage_exclude": [],
+  "secret_pattern": "pass|psk|secret|token|key|MQTTUsername|MQTTHost|email"
+}

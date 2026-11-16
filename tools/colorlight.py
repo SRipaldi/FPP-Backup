@@ -96,17 +96,32 @@ def tail(base, path, lines):
     return b.decode("utf-8", "replace") if isinstance(b, bytes) else b
 
 
+def iso_time(s):
+    """datetime from an ISO 8601 timestamp a controller wrote, or None if it isn't a real one. Any number of
+    fraction digits (Python 3.9's fromisoformat takes only 3 or 6), and an impossible date such as month 13
+    makes the line unreadable rather than crashing the whole check."""
+    s = re.sub(r"\.(\d+)", lambda m: "." + (m.group(1) + "000000")[:6], s, count=1)
+    try:
+        return datetime.fromisoformat(s)
+    except ValueError:
+        return None
+
+
 def syslog_time(line, tz):
     """Epoch and UTC offset of a syslog line: RFC 3339 (Debian 12+) or the
-    traditional "Oct 30 14:06:08" (taken in the given offset, this year)."""
+    traditional "Oct 30 14:06:08" (taken in the given offset, this year).
+    (None, tz) for a line without a readable time."""
     m = re.match(r"^(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d+)?[+-]\d\d:\d\d) ", line)
     if m:
-        d = datetime.fromisoformat(m.group(1))
-        return d.timestamp(), d.utcoffset().total_seconds()
+        d = iso_time(m.group(1))
+        return (d.timestamp(), d.utcoffset().total_seconds()) if d else (None, tz)
     m = re.match(r"^(\w{3} [ \d]\d \d\d:\d\d:\d\d) ", line)
     if m:
         now = time.time()
-        d = datetime.strptime(f"{datetime.now().year} {m.group(1)}", "%Y %b %d %H:%M:%S")
+        try:
+            d = datetime.strptime(f"{datetime.now().year} {m.group(1)}", "%Y %b %d %H:%M:%S")
+        except ValueError:  # "Feb 30", "Xyz 01"
+            return None, tz
         t = d.replace(tzinfo=timezone.utc).timestamp() - tz
         return (t - 365 * 86400 if t > now + 86400 else t), tz
     return None, tz
@@ -139,9 +154,10 @@ def parse_fppd(text, tz):
     events, first, last, receiver = [], None, None, None
     for line in text.splitlines():
         m = re.match(r"^(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d(?:\.\d+)?) ", line)
-        if not m:
+        d = iso_time(m.group(1)) if m else None
+        if not d:
             continue
-        t = datetime.fromisoformat(m.group(1)).replace(tzinfo=timezone.utc).timestamp() - tz
+        t = d.replace(tzinfo=timezone.utc).timestamp() - tz
         first = first if first is not None else t
         last = t
         if "ColorLight" not in line and "Receiver" not in line and receiver is None:

@@ -317,7 +317,13 @@ def validate_policy(policy):
     is read as "player"."""
     if not isinstance(policy, dict):
         raise ValueError("policy must be an object")
-    secret = re.compile(policy.get("secret_pattern") or "pass|psk|secret|token|key", re.I)
+    pattern = policy.get("secret_pattern") or "pass|psk|secret|token|key"
+    if not isinstance(pattern, str) or len(pattern) > 500:
+        raise ValueError("secret_pattern must be a regular expression (text, up to 500 characters)")
+    try:
+        secret = re.compile(pattern, re.I)
+    except re.error as e:  # a bad pattern from the Settings page is a refused policy, not a server error
+        raise ValueError(f"secret_pattern is not a valid regular expression: {e}")
 
     def text(v, what):
         if not isinstance(v, (str, int, float)) or isinstance(v, bool):

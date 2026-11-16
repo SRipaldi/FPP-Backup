@@ -62,6 +62,13 @@ class CheckPublic(unittest.TestCase):
             self.assertEqual(self.run_main("--text", str(root / "body.md")), 1)
             self.assertEqual(self.run_main("--commit-msg", str(root / "MSG")), 0)
 
+    def test_binary_or_non_utf8_files_are_still_checked(self):
+        f = Path(self.tmp.name) / "blob.bin"
+        f.write_bytes(b"\x89PNG\xd2\xff on FPP-Gazebo \x00")
+        import contextlib, io
+        with contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(self.run_main("--text", str(f)), 1)
+
     def run_main(self, *argv):
         saved = sys.argv
         sys.argv = ["check_public.py", *argv]

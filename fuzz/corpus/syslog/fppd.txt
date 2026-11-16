@@ -1,0 +1,5 @@
+2026-01-02 03:04:05.123 fppd(1) [ChannelOutput] ColorLight: Calling Init() on ColorLight
+2026-01-02 03:04:06 fppd(1) [ChannelOutput] Found 1 ColorLight receiver
+2026-01-02 03:04:06 fppd(1) Found Receiver #1
+2026-01-02 03:04:06 fppd(1)    Firmware Version: 13.9
+2026-01-02 03:04:07 fppd(1) ColorLight: Interface eth0 is not keeping up, 3 frames

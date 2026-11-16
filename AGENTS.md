@@ -39,6 +39,7 @@ tools/upgrade.py      in-place upgrades: plan (read-only), run (one unit at a ti
 tools/check_public.py finds this installation's names/addresses, secrets and personal data in what would be
                       published (staged changes, commit messages, PR/release text, pushes); installs git hooks
 tests/                unittest suite; fake_fpp.py is a pretend controller for the upgrade's write paths
+fuzz/                 fuzz.py: Atheris targets for untrusted-input parsers (--selftest runs without Atheris); corpus/ seeds
 tools/colorlight.py   ColorLight receiver health from each controller's syslog/fppd.log tails; history in
                       work/cache/colorlight.json; the monitor checks it every 5 min (Show > ColorLight)
 ```
@@ -94,21 +95,25 @@ The fleet is a real, running light show.
 | ShellCheck, hadolint | The shell scripts and the builder Dockerfile, which CodeQL can't read | `.github/workflows/lint.yml`, every PR |
 | OSV-Scanner | SCA: the builder container exactly as `build_image.sh` builds it (`tools/builder/Dockerfile`), and bb-imager's `Cargo.lock` at the pinned commit | `.github/workflows/security-scans.yml`, weekly + PRs touching them |
 | OpenSSF Scorecard | Repository posture: branch protection, pinning, signing, token permissions | same workflow, weekly; a score table on the run's summary page |
-| Syft | Signed SPDX SBOMs attached to each release | `.github/workflows/sbom.yml`, run against the draft release |
+| Unit tests | `tests/` on Python 3.9, 3.13 and macOS's python3, plus `check_public.py --all` | `.github/workflows/tests.yml`, every PR (required) |
+| Atheris (libFuzzer) | Fuzzing the parsers of untrusted input: controller logs, release notes, settings that become shell, FSEQ headers, the policy, the leak check's regexes (`fuzz/fuzz.py`) | `.github/workflows/fuzz.yml`, 1 min per target on PRs touching `tools/`, 10 min weekly |
+| Syft | Signed SPDX SBOMs plus a signed source archive attached to each release | `.github/workflows/sbom.yml`, run against the draft release |
 | Dependabot | Version bumps for the base image and the pinned actions; security alerts | `.github/dependabot.yml` |
 | Secret scanning + push protection | Known token formats, server-side | repository settings |
 | `tools/check_public.py` | This installation's names and addresses, secrets, personal data | git hooks, before anything is published |
 
+**Fuzzing finds real bugs**: its first run found a crash on a controller log timestamp Python 3.9 can't parse and a policy regex error that escaped the server's handler (both fixed, with tests in `tests/test_parsers.py`). Run a target locally without installing anything: `python3 fuzz/fuzz.py <target> --selftest`.
+
 **No open alert at any severity.** Severity is not risk, so a low or medium finding is fixed like a high one: update, replace or remove the component. The only exception is a finding with no fix anywhere (no patched version, no alternative): dismiss it in code scanning as "won't fix" with the reason and the date to look again, never silently. The weekly scan is the check that this holds.
 
-CodeQL and OSV-Scanner results land in Security > Code scanning, one category per tool. Scorecard's program has no SARIF output (only its third-party action does), so its table is on the run's summary page. Dependabot alerts stay empty by design: there are no package manifests, which is why the image and Cargo.lock are scanned directly.
+CodeQL and OSV-Scanner results land in Security > Code scanning, one category per tool. Scorecard's program has no SARIF output (only its third-party action does), so its table is on the run's summary page. Dependabot alerts stay empty by design: the tool has no package manifests (fuzzing's pinned Atheris is the only Python package, and CI-only), which is why the builder image is scanned directly.
 
 **Trust model for CI**, after third-party action compromises (tj-actions/changed-files, trivy-action) in which a moved tag shipped malicious code:
 - **No third-party GitHub Actions.** The repository allows only GitHub-owned actions, and workflows pin even those by full commit SHA, with the version in a comment. Dependabot proposes updates after a 14-day cooldown.
-- **Scanners are release binaries, pinned by version and SHA-256** in `.github/scripts/fetch-tool.sh`, the only place third-party code enters CI. A pin is chosen only from a release at least 14 days old, and only when GitHub's recorded asset digest and the publisher's checksum file agree. To update one, change the version and the hash together, from both sources, and review it like code.
+- **Scanners are release binaries, pinned by version and SHA-256** in `.github/scripts/fetch-tool.sh`; the one Python package, Atheris for fuzzing, is pinned by version and hash in `fuzz/requirements.txt` (`pip --require-hashes`). Those are the only places third-party code enters CI. A pin is chosen only from a release at least 14 days old, and only when GitHub's recorded asset digest and the publisher's checksum file agree. To update one, change the version and the hash together, from both sources, and review it like code.
 - **Least privilege.** Every workflow starts from `permissions: {}` or `contents: read`, and checkout never keeps credentials. A job that runs a third-party scanner holds only a read-only token and no secrets. Writing results (`security-events: write`), signing (`id-token`, `attestations`) and attaching to a release (`contents: write`) happen in separate jobs that run only GitHub's own actions and the gh CLI.
 - **No secrets in CI.** Nothing in this repository's Actions needs one; keep it that way.
-- **Release process with SBOMs**: `gh release create vX.Y.Z --draft --verify-tag ...`, then `gh workflow run sbom.yml -f tag=vX.Y.Z`, wait for it, check the three `sbom-*.spdx.json` assets, then publish (`gh release edit vX.Y.Z --draft=false --latest`). Published releases are immutable.
+- **Release process with SBOMs**: `gh release create vX.Y.Z --draft --verify-tag ...`, then `gh workflow run sbom.yml -f tag=vX.Y.Z`, wait for it, check the assets (three `sbom-*.spdx.json`, `FPP-Backup-vX.Y.Z.tar.gz`, and its `.sigstore.json` and `.intoto.jsonl` signatures), then publish (`gh release edit vX.Y.Z --draft=false --latest`). Published releases are immutable.
 
 ## FPP facts this code depends on
 
