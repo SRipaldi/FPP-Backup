@@ -157,7 +157,7 @@ tools/upgrade.py images | cleanup --hosts a,b                 # leftover OS imag
 | Flash: "Unable to obtain authorization" or no password dialog | Start `ui/server.py` (or `flash_card.py`) from your own Terminal or VS Code session. |
 | Flash: "Operation not permitted" | Something tried to write the disk as root, which macOS privacy protection blocks. Use the app's flash step, which writes through `authopen`. |
 | Build: Docker not found or cannot connect | Start Rancher Desktop (dockerd/moby). The tools use `~/.rd/docker.sock`; set `DOCKER_HOST` for another engine. |
-| Build: "failed to set up loop device" | Stale loop devices in the Rancher VM: `docker run --rm --privileged debian:trixie-slim losetup -a`, then `losetup -d` the ones that aren't `modloop`. |
+| Build: "failed to set up loop device" | Stale loop devices in the Rancher VM: `docker run --rm --privileged --entrypoint losetup $(docker build -q tools/builder) -a`, then `losetup -d` the ones that aren't `modloop`. |
 | A healthy controller shows offline | The player's proxy was overloaded or slow. Rescan; the monitor only reports offline after two missed checks. |
 | A rebuilt card comes up on DHCP or at FPP's setup page | Build the card with this tool, which handles both. |
 

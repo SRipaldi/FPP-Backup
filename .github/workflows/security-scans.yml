@@ -1,8 +1,8 @@
 # Dependency (SCA) and repository-posture scans. OSV-Scanner results go to Security > Code scanning;
 # Scorecard's go to the run's summary page (and a 90-day artifact).
 #
-#   builder image   the card-builder container as build_image.sh runs it (pinned Debian base + the
-#                   packages it installs), for known vulnerabilities (OSV-Scanner)
+#   builder image   the card-builder container exactly as build_image.sh builds it (tools/builder/
+#                   Dockerfile: pinned Alpine base + its packages), for known vulnerabilities (OSV-Scanner)
 #   bb-imager       the Rust dependencies (Cargo.lock) of the pinned bb-imager-cli (OSV-Scanner)
 #   scorecard       OpenSSF Scorecard: branch protection, pinning, signing, token permissions...
 #
