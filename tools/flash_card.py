@@ -7,9 +7,11 @@ card read-write and passes the open descriptor back over a socket. This process
 never runs as root and needs no Full Disk Access (a root shell from sudo or
 osascript is blocked from raw disks by macOS privacy protection).
 
-Safety: the target must be a card bb-imager-cli lists as an SD destination,
-removable, no larger than 256 GB and big enough for the image. Without --yes
-the disk id must be typed back before anything is written.
+Safety: the target must be an SD destination (sd_destinations: a physical
+whole disk macOS reports as removable or ejectable, the same rule the
+BeagleBoard Imaging Utility uses), removable, writable, no larger than 256 GB
+and big enough for the image. Without --yes the disk id must be typed back
+before anything is written.
 
 Verify: the card is read back through the same descriptor and every partition
 plus the partition table must match the image byte for byte.
@@ -23,7 +25,6 @@ import hashlib
 import os
 import plistlib
 import re
-import shutil
 import socket
 import struct
 import subprocess
@@ -31,27 +32,32 @@ import sys
 import time
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
 MAX_CARD = 256_000_000_000
 CHUNK = 4 * 1024 * 1024  # a multiple of 512, as raw devices require
-
-
-def imager():
-    p = os.environ.get("BB_IMAGER_CLI") or str(ROOT / "work/bin/bb-imager-cli")
-    if not (Path(p).exists() or shutil.which(p)):
-        sys.exit(f"bb-imager-cli not found at {p}; run tools/setup_bb_imager.sh")
-    return p
-
-
-def sd_destinations():
-    out = subprocess.run([imager(), "list-destinations", "sd", "--no-frills"],
-                         capture_output=True, text=True, check=True).stdout
-    return [line.strip() for line in out.splitlines() if line.strip()]
 
 
 def disk_info(disk):
     out = subprocess.run(["diskutil", "info", "-plist", disk], capture_output=True, check=True).stdout
     return plistlib.loads(out)
+
+
+def physical_whole_disks():
+    out = subprocess.run(["diskutil", "list", "-plist", "physical"], capture_output=True, check=True).stdout
+    return [d for d in plistlib.loads(out).get("WholeDisks", []) if re.match(r"^disk\d+$", d)]
+
+
+def is_sd_destination(info):
+    """The BeagleBoard Imaging Utility's rule (bb-flasher-sd devices(filter=true), with bb-drivelist's macOS
+    Disk Arbitration fields): a whole disk that is removable or ejectable and not virtual. diskutil reads the
+    same Disk Arbitration description, so the two agree; check_target then adds its own size and write checks."""
+    return (info.get("WholeDisk") is True
+            and bool(info.get("RemovableMedia") or info.get("Ejectable"))
+            and info.get("BusProtocol") != "Virtual Interface")
+
+
+def sd_destinations(disks=None, info_for=disk_info):
+    """Raw device paths (/dev/rdiskN) of the SD destinations, from macOS's own disk list."""
+    return [f"/dev/r{d}" for d in (physical_whole_disks() if disks is None else disks) if is_sd_destination(info_for(d))]
 
 
 def mbr_partitions(mbr):
@@ -72,7 +78,7 @@ def check_target(image, disk):
     raw = f"/dev/r{disk}"
     listed = sd_destinations()
     if raw not in listed:
-        sys.exit(f"{raw} is not an SD destination per bb-imager-cli (sees: {listed or 'none'})")
+        sys.exit(f"{raw} is not an SD destination (removable or ejectable, physical; sees: {listed or 'none'})")
     info = disk_info(disk)
     size = info.get("TotalSize") or info.get("Size")
     if not info.get("RemovableMedia") and info.get("BusProtocol") not in ("Secure Digital", "USB"):

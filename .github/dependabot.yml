@@ -1,8 +1,7 @@
 # Dependabot opens a PR when a pinned dependency has a newer version.
 # The Python code uses only the standard library and the UI has no JS libraries,
 # so what it can track is the build container and the GitHub-owned actions the
-# workflows pin by commit SHA. bb-imager (a pinned release built by
-# tools/setup_bb_imager.sh) and the scanners pinned in .github/scripts/fetch-tool.sh
+# workflows pin by commit SHA. The scanners pinned in .github/scripts/fetch-tool.sh
 # are outside its reach: those are updated by hand (see AGENTS.md "CI and scanning").
 #
 # cooldown: a new release is proposed only once it is that many days old, so a

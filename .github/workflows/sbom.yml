@@ -1,7 +1,6 @@
 # Software bills of materials and a source archive for a release, signed and attached to it.
 #
 #   sbom-builder-image.spdx.json   the card-builder container as build_image.sh runs it
-#   sbom-bb-imager.spdx.json       bb-imager-cli's Rust dependencies at the pinned commit
 #   sbom-fpp-backup.spdx.json      this repository (standard library only; recorded for completeness)
 #   FPP-Backup-<tag>.tar.gz        the source at the tag (git archive), so a download can be verified
 #   FPP-Backup-<tag>.sigstore.json the signature bundle (build provenance) covering all of the above
@@ -51,10 +50,6 @@ jobs:
         run: |
           .github/scripts/builder-runtime-image.sh "$RUNNER_TEMP/builder.tar"
           syft scan "docker-archive:$RUNNER_TEMP/builder.tar" --source-name fpp-backup-builder --source-version "${TAG:-$GITHUB_SHA}" -o "spdx-json=sbom-builder-image.spdx.json"
-      - name: bb-imager
-        run: |
-          .github/scripts/fetch-bb-imager.sh "$RUNNER_TEMP/bb-imager"
-          syft scan "dir:$RUNNER_TEMP/bb-imager" --source-name bb-imager-cli --source-version "$(sed -n 's/^VERSION=\${1:-\(.*\)}$/\1/p' tools/setup_bb_imager.sh)" -o "spdx-json=sbom-bb-imager.spdx.json"
       - name: This repository
         run: syft scan dir:. --exclude ./.git --source-name fpp-backup --source-version "${TAG:-$GITHUB_SHA}" -o "spdx-json=sbom-fpp-backup.spdx.json"
       - name: Source archive

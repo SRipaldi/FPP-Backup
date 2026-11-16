@@ -30,7 +30,6 @@ Working and in use on a multi-controller show (Raspberry Pi 4, BeagleBone Black 
 | Python 3.9+ | everything | no packages to install. macOS's own `python3` (3.9.6, from the Command Line Tools) works but is past end of life; a current Python (python.org or Homebrew) is better |
 | Network access to your FPP player | everything | the player is the one controller the app talks to directly; others are reached through its `/proxy/` |
 | [Rancher Desktop](https://rancherdesktop.io/) (dockerd / moby engine) | building card images | any Docker engine works; the tools look for Rancher's socket at `~/.rd/docker.sock` |
-| Rust (`cargo`), once | SD card detection | `tools/setup_bb_imager.sh` builds the BeagleBoard Imaging Utility's CLI |
 | An SD card reader | flashing | built-in or USB |
 | [xLights](https://xlights.org/) on this computer, with its automation port on | pushing missing sequences | xLights **Preferences**: set **xFade port** to **A** (port 49913) |
 
@@ -40,7 +39,6 @@ Use the [latest release](https://github.com/SRipaldi/FPP-Backup/releases/latest)
 
 ```bash
 git clone --branch v0.3.0 https://github.com/SRipaldi/FPP-Backup.git && cd FPP-Backup
-tools/setup_bb_imager.sh          # once: builds bb-imager-cli into work/bin/ (needs cargo)
 python3 ui/server.py              # opens http://127.0.0.1:8765/
 ```
 
@@ -187,4 +185,4 @@ Issues and pull requests are welcome; see [CONTRIBUTING.md](CONTRIBUTING.md). Re
 
 ## License
 
-[MIT](LICENSE). This repository contains no FPP code. FPP itself is licensed separately (LGPL 2.1, GPL v2 and CC-BY-ND for different parts; see the [FPP repository](https://github.com/FalconChristmas/fpp/blob/master/LICENSE)), and card images this tool builds contain FPP, so don't publish built `.img` files (they also hold your passwords). `tools/setup_bb_imager.sh` downloads and builds the MIT-licensed [BeagleBoard Imaging Utility](https://github.com/beagleboard/bb-imager-rs); if you redistribute a built copy, include its license.
+[MIT](LICENSE). This repository contains no FPP code. FPP itself is licensed separately (LGPL 2.1, GPL v2 and CC-BY-ND for different parts; see the [FPP repository](https://github.com/FalconChristmas/fpp/blob/master/LICENSE)), and card images this tool builds contain FPP, so don't publish built `.img` files (they also hold your passwords).
