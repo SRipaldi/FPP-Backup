@@ -1,0 +1,46 @@
+# Static checks CodeQL does not cover: the shell scripts (tools/build_image.sh runs a container as
+# root with --privileged) and the card-builder Dockerfile. Runs on every pull request and on main.
+#
+# Trust model (see AGENTS.md "CI and scanning"): only GitHub-owned actions, pinned by commit SHA;
+# third-party tools come from .github/scripts/fetch-tool.sh, pinned by version and SHA-256. Read-only
+# token, no secrets.
+name: Lint
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  shellcheck:
+    name: ShellCheck
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      # ShellCheck ships with GitHub's Ubuntu runner image (from Ubuntu's signed archive): nothing to download.
+      - name: ShellCheck
+        run: |
+          shellcheck --version
+          git ls-files -z '*.sh' | xargs -0 shellcheck --external-sources --format=gcc
+
+  hadolint:
+    name: hadolint
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install hadolint (pinned, SHA-256 verified)
+        run: .github/scripts/fetch-tool.sh hadolint
+      - name: hadolint
+        run: |
+          hadolint --version
+          hadolint --format tty tools/builder/Dockerfile
