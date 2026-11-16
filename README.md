@@ -38,7 +38,7 @@ Working and in use on a multi-controller show (Raspberry Pi 4, BeagleBone Black 
 Use the [latest release](https://github.com/SRipaldi/FPP-Backup/releases/latest): clone it as below, or download its source zip. `main` has the newest changes and may be mid-way through one.
 
 ```bash
-git clone --branch v0.3.0 https://github.com/SRipaldi/FPP-Backup.git && cd FPP-Backup
+git clone --branch v0.3.1 https://github.com/SRipaldi/FPP-Backup.git && cd FPP-Backup
 python3 ui/server.py              # opens http://127.0.0.1:8765/
 ```
 
