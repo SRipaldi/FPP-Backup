@@ -8,7 +8,10 @@ set -euo pipefail
 dir=$1
 version=$(sed -n 's/^VERSION=\${1:-\(.*\)}$/\1/p' tools/setup_bb_imager.sh)
 pinned=$(sed -n 's/^PINNED_COMMIT=\([0-9a-f]\{40\}\)$/\1/p' tools/setup_bb_imager.sh)
-[ -n "$version" ] && [ -n "$pinned" ] || { echo "::error::could not read VERSION/PINNED_COMMIT from tools/setup_bb_imager.sh" >&2; exit 1; }
+if [ -z "$version" ] || [ -z "$pinned" ]; then
+    echo "::error::could not read VERSION/PINNED_COMMIT from tools/setup_bb_imager.sh" >&2
+    exit 1
+fi
 
 git clone -q --depth 1 --branch "$version" https://github.com/beagleboard/bb-imager-rs.git "$dir"
 got=$(git -C "$dir" rev-parse HEAD)

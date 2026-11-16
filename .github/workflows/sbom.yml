@@ -8,6 +8,7 @@
 #   gh release create vX.Y.Z --draft ...   then   gh workflow run sbom.yml -f tag=vX.Y.Z
 #   wait for it, then publish the draft. Verify a downloaded SBOM with:
 #   gh attestation verify sbom-builder-image.spdx.json -R SRipaldi/FPP-Backup
+# Without a tag it is a dry run: SBOMs of the current commit, signed, kept as a workflow artifact only.
 #
 # Trust model (see AGENTS.md "CI and scanning"): Syft (third-party, pinned by version and SHA-256) runs in
 # a job with a read-only token. Signing and attaching happen in a separate job that runs only GitHub's own
@@ -18,8 +19,9 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Release tag (a draft release must exist), e.g. v0.3.1"
-        required: true
+        description: "Release tag of a DRAFT release, e.g. v0.3.1 (empty: dry run on this commit, nothing attached)"
+        required: false
+        default: ""
 
 permissions: {}
 
@@ -34,23 +36,23 @@ jobs:
       TAG: ${{ inputs.tag }}
     steps:
       - name: Check the tag
-        run: '[[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::not a release tag: $TAG"; exit 1; }'
+        run: '[ -z "$TAG" ] || [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::not a release tag: $TAG"; exit 1; }'
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
-          ref: ${{ inputs.tag }}
+          ref: ${{ inputs.tag || github.sha }}
           persist-credentials: false
       - name: Install Syft (pinned, SHA-256 verified)
         run: .github/scripts/fetch-tool.sh syft
       - name: Builder image
         run: |
           .github/scripts/builder-runtime-image.sh "$RUNNER_TEMP/builder.tar"
-          syft scan "docker-archive:$RUNNER_TEMP/builder.tar" --source-name fpp-backup-builder --source-version "$TAG" -o "spdx-json=sbom-builder-image.spdx.json"
+          syft scan "docker-archive:$RUNNER_TEMP/builder.tar" --source-name fpp-backup-builder --source-version "${TAG:-$GITHUB_SHA}" -o "spdx-json=sbom-builder-image.spdx.json"
       - name: bb-imager
         run: |
           .github/scripts/fetch-bb-imager.sh "$RUNNER_TEMP/bb-imager"
           syft scan "dir:$RUNNER_TEMP/bb-imager" --source-name bb-imager-cli --source-version "$(sed -n 's/^VERSION=\${1:-\(.*\)}$/\1/p' tools/setup_bb_imager.sh)" -o "spdx-json=sbom-bb-imager.spdx.json"
       - name: This repository
-        run: syft scan dir:. --exclude ./.git --source-name fpp-backup --source-version "$TAG" -o "spdx-json=sbom-fpp-backup.spdx.json"
+        run: syft scan dir:. --exclude ./.git --source-name fpp-backup --source-version "${TAG:-$GITHUB_SHA}" -o "spdx-json=sbom-fpp-backup.spdx.json"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
         with:
           name: sbom
@@ -76,6 +78,7 @@ jobs:
           name: sbom
           path: sbom
       - name: Check the release is a draft
+        if: inputs.tag != ''
         run: |
           [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::not a release tag: $TAG"; exit 1; }
           [ "$(gh release view "$TAG" --json isDraft --jq .isDraft)" = true ] || { echo "::error::$TAG is not a draft release (published releases are immutable)"; exit 1; }
@@ -83,4 +86,5 @@ jobs:
         with:
           subject-path: sbom/*.spdx.json
       - name: Attach to the draft
+        if: inputs.tag != ''
         run: gh release upload "$TAG" sbom/*.spdx.json --clobber
