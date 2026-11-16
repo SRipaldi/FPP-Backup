@@ -13,12 +13,16 @@ OUT=$(cd "$(dirname "$3")" && pwd)/$(basename "$3")
 
 # The image holds the controller's passwords and Wi-Fi keys: readable by this user only.
 umask 077
-# Pinned by digest in tools/builder/Dockerfile's FROM line (Dependabot proposes bumps).
-BUILDER_IMAGE=${BUILDER_IMAGE:-$(sed -n 's/^FROM //p' "$(dirname "$0")/builder/Dockerfile")}
-[[ "$BUILDER_IMAGE" == *@sha256:* ]] || { echo "builder image is not pinned by digest: '$BUILDER_IMAGE'" >&2; exit 1; }
+BUILDER_DIR="$(cd "$(dirname "$0")/builder" && pwd)"
+# The base is pinned by digest in the Dockerfile's FROM line (Dependabot proposes bumps).
+grep -Eq '^FROM [^ ]+@sha256:[0-9a-f]{64}$' "$BUILDER_DIR/Dockerfile" \
+    || { echo "builder base image is not pinned by digest in $BUILDER_DIR/Dockerfile" >&2; exit 1; }
 
 export PATH="$HOME/.rd/bin:$PATH"
 export DOCKER_HOST="${DOCKER_HOST:-unix://$HOME/.rd/docker.sock}"
+
+# Built fresh every time (a few seconds): the packages are always the current, patched ones.
+BUILDER_IMAGE=${BUILDER_IMAGE:-$(docker build --quiet --no-cache "$BUILDER_DIR")}
 
 [ -f "$STOCK" ] || { echo "no stock image: $STOCK" >&2; exit 1; }
 [ -f "$STAGE/settings" ] || { echo "no settings in stage dir: $STAGE" >&2; exit 1; }
@@ -31,11 +35,10 @@ ROOTFS_SH="$STAGE.rootfs.sh"
 rm -f "$OUT"
 cp -c "$STOCK" "$OUT"
 
+# The image's entrypoint is bash -euo pipefail -c; the script below is its argument.
 docker run --rm --privileged \
     -v "$OUT:/img/out.img" -v "$STAGE:/stage:ro" -v "$ROOTFS_SH:/rootfs.sh:ro" \
-    "$BUILDER_IMAGE" bash -euo pipefail -c '
-apt-get -qq update >/dev/null && apt-get -qq install -y fdisk rsync e2fsprogs dosfstools >/dev/null 2>&1
-
+    "$BUILDER_IMAGE" '
 IMG=/img/out.img
 # Partition 1 = FAT boot, last Linux (83) partition = root.
 read BOOT_START BOOT_SIZE < <(sfdisk -d $IMG | awk -F"[=,]" "/type=c/ {print \$2+0, \$4+0; exit}")

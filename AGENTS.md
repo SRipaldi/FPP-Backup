@@ -83,7 +83,7 @@ The fleet is a real, running light show.
 - **Secrets on disk**: snapshot, stage and build tools set `umask 077`.
 - **Controller passwords**: only in the Keychain (`fpp_http`, service `FPP-Backup`, accounts `default` and `host:<HostName>`; `FPP_BACKUP_KEYCHAIN` points tests at another service). Never return a password from an endpoint or write one to `config/`. Every controller request must go through `fpp_http.request` (via `fleet.fetch`/`fetch_json`) so it carries the password. Through the player's proxy only one Authorization header is sent: the controller's password, else the default; different player and controller passwords therefore need direct access.
 - **Incremental media** (`snapshot.py`): reused files are hard links into the previous snapshot. Never write into a snapshot after it is taken (that would change older ones too); the reuse rule is same size plus an identical recorded mtime; only for snapshots that recorded none, a listing mtime older than the previous snapshot's start minus 10 minutes (BeagleBones can stamp uploads with a stale date before NTP, so the older-than rule alone is not trusted). Staging copies the files, so builds never write through a link.
-- **Supply chain**: FPP images are checked against the SHA-256 GitHub publishes (`get_image.py`); the build container is pinned by digest (the `FROM` line of `tools/builder/Dockerfile`, which `build_image.sh` reads; Dependabot proposes bumps); bb-imager-cli is built `--locked` from a pinned commit. Bump pins deliberately.
+- **Supply chain**: FPP images are checked against the SHA-256 GitHub publishes (`get_image.py`); the build container is built from `tools/builder/Dockerfile` on every run (`--no-cache`, so its Alpine packages are the current, patched ones) on a base pinned by digest (Dependabot proposes bumps); bb-imager-cli is built `--locked` from a pinned commit. Bump pins deliberately.
 - **xLights automation port** (49913) has no auth, binds all interfaces and allows any origin; never leave it on in instructions or defaults.
 
 ## CI and scanning
@@ -92,12 +92,14 @@ The fleet is a real, running light show.
 |---|---|---|
 | CodeQL (`security-extended` queries) | SAST: Python and JavaScript | GitHub default setup; every PR and weekly. A high or critical alert blocks merging (ruleset). |
 | ShellCheck, hadolint | The shell scripts and the builder Dockerfile, which CodeQL can't read | `.github/workflows/lint.yml`, every PR |
-| OSV-Scanner | SCA: the builder container as `build_image.sh` runs it (base image + the apt packages it installs), and bb-imager's `Cargo.lock` at the pinned commit | `.github/workflows/security-scans.yml`, weekly + PRs touching them |
+| OSV-Scanner | SCA: the builder container exactly as `build_image.sh` builds it (`tools/builder/Dockerfile`), and bb-imager's `Cargo.lock` at the pinned commit | `.github/workflows/security-scans.yml`, weekly + PRs touching them |
 | OpenSSF Scorecard | Repository posture: branch protection, pinning, signing, token permissions | same workflow, weekly; a score table on the run's summary page |
 | Syft | Signed SPDX SBOMs attached to each release | `.github/workflows/sbom.yml`, run against the draft release |
 | Dependabot | Version bumps for the base image and the pinned actions; security alerts | `.github/dependabot.yml` |
 | Secret scanning + push protection | Known token formats, server-side | repository settings |
 | `tools/check_public.py` | This installation's names and addresses, secrets, personal data | git hooks, before anything is published |
+
+**No open alert at any severity.** Severity is not risk, so a low or medium finding is fixed like a high one: update, replace or remove the component. The only exception is a finding with no fix anywhere (no patched version, no alternative): dismiss it in code scanning as "won't fix" with the reason and the date to look again, never silently. The weekly scan is the check that this holds.
 
 CodeQL and OSV-Scanner results land in Security > Code scanning, one category per tool. Scorecard's program has no SARIF output (only its third-party action does), so its table is on the run's summary page. Dependabot alerts stay empty by design: there are no package manifests, which is why the image and Cargo.lock are scanned directly.
 

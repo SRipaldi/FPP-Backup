@@ -7,8 +7,8 @@
 #
 # cooldown: a new release is proposed only once it is that many days old, so a
 # compromised release has time to be caught and pulled before it reaches this
-# repository. 14 days for actions; 3 for Debian's official image, whose new digests
-# are mostly security fixes that should not wait two weeks.
+# repository. 14 days for actions; 3 for the official Alpine base image, whose new
+# digests are mostly security fixes that should not wait two weeks.
 version: 2
 updates:
   - package-ecosystem: docker
