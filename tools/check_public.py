@@ -37,7 +37,7 @@ CONFIG = ROOT / "config"
 # Folders that hold this installation's data, git-ignored; nothing in them may ever be committed.
 PRIVATE_DIRS = ("snapshots/", "work/", "config/", "fpp-issues/")
 PRIVATE_FILES = re.compile(r"(^|/)(\.env|.*\.img(\.xz)?|.*\.fppos|.*\.pem|.*\.key|id_(rsa|ed25519)(\.pub)?)$")
-SECRETS = [
+LEAK_PATTERNS = [
     ("private key", re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----")),
     ("GitHub token", re.compile(r"\b(gh[pousr]_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{30,})")),
     ("AWS key", re.compile(r"\bAKIA[0-9A-Z]{16}\b")),
@@ -97,7 +97,7 @@ def private_terms():
     return out
 
 
-SECRET_LABELS = {label for label, _ in SECRETS}
+HIDE_VALUE_KINDS = {label for label, _ in LEAK_PATTERNS}
 
 
 def scan_text(text, where, rules):
@@ -107,7 +107,7 @@ def scan_text(text, where, rules):
             m = rx.search(line)
             if not m:
                 continue
-            if label in SECRET_LABELS:
+            if label in HIDE_VALUE_KINDS:
                 # Never echo a secret: this output can end up in a terminal log, CI or a pasted transcript.
                 found.append(f"{where}:{i}: {label} at column {m.start() + 1} (value not shown)")
             else:
@@ -181,7 +181,7 @@ def main():
     args = ap.parse_args()
     if args.install_hooks:
         return install_hooks()
-    rules = private_terms() + SECRETS
+    rules = private_terms() + LEAK_PATTERNS
     if args.staged:
         found = check_paths(git("diff", "--cached", "--name-only", "--diff-filter=AR").splitlines())
         found += scan_diff(git("diff", "--cached", "-U0"), rules)

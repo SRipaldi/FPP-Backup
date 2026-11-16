@@ -23,7 +23,7 @@ class CheckPublic(unittest.TestCase):
         (root / "config" / "private-terms.txt").write_text("# show names\nWinter Wonder 2031\n")
         self.saved = check_public.CONFIG, check_public.ROOT
         check_public.CONFIG, check_public.ROOT = root / "config", root
-        self.rules = check_public.private_terms() + check_public.SECRETS
+        self.rules = check_public.private_terms() + check_public.LEAK_PATTERNS
 
     def tearDown(self):
         check_public.CONFIG, check_public.ROOT = self.saved
