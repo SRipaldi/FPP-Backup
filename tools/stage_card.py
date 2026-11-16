@@ -5,7 +5,7 @@ The staged tree is what tools/build_image.sh copies into the image's root
 partition: the settings file plus config, playlists, scripts and media.
 
 No BootActions=settings, although FPP's own restore sets it: its handler runs
-inside `fppinit start`, and on FPP-Side's first 10.3 boot fppinit stopped
+inside `fppinit start`, and on one remote's first 10.3 boot fppinit stopped
 there until the 60 s watchdog killed it, so setupNetwork and everything after
 it never ran. The handler makes synchronous systemctl calls that can wait on
 units ordered after fppinit (`systemctl restart chrony` for ntpServer, and
@@ -36,8 +36,8 @@ The output contains secrets (osPassword, .htpasswd, Wi-Fi PSKs). It belongs
 under work/, which is gitignored.
 
 Usage:
-  tools/stage_card.py snapshots/FPP-Side/<ts> work/stage/FPP-Side \\
-      [--reference snapshots/FPP-Porch/<ts>]
+  tools/stage_card.py snapshots/<host>/<ts> work/stage/<host> \\
+      [--reference snapshots/<other-host>/<ts>]
 """
 import argparse
 import json

@@ -67,7 +67,7 @@ class NotReturned(RuntimeError):
     """The controller did not rejoin the network after its upgrade reboot, so the tool could not confirm it.
 
     The upgrade may still have succeeded — this only means we lost sight of the controller. It matters most for
-    the master, which this Mac reaches over a single link (its Wi-Fi, e.g. 172.1.2.10): if the first boot after an
+    the master, which this Mac reaches over a single link (for example its Wi-Fi): if the first boot after an
     OS upgrade leaves that link down, the box is invisible here and the reboot-once-more self-heal can't even run.
     """
 
