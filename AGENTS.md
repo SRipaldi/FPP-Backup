@@ -86,6 +86,28 @@ The fleet is a real, running light show.
 - **Supply chain**: FPP images are checked against the SHA-256 GitHub publishes (`get_image.py`); the build container is pinned by digest (the `FROM` line of `tools/builder/Dockerfile`, which `build_image.sh` reads; Dependabot proposes bumps); bb-imager-cli is built `--locked` from a pinned commit. Bump pins deliberately.
 - **xLights automation port** (49913) has no auth, binds all interfaces and allows any origin; never leave it on in instructions or defaults.
 
+## CI and scanning
+
+| What | Covers | Where |
+|---|---|---|
+| CodeQL (`security-extended` queries) | SAST: Python and JavaScript | GitHub default setup; every PR and weekly. A high or critical alert blocks merging (ruleset). |
+| ShellCheck, hadolint | The shell scripts and the builder Dockerfile, which CodeQL can't read | `.github/workflows/lint.yml`, every PR |
+| OSV-Scanner | SCA: the builder container as `build_image.sh` runs it (base image + the apt packages it installs), and bb-imager's `Cargo.lock` at the pinned commit | `.github/workflows/security-scans.yml`, weekly + PRs touching them |
+| OpenSSF Scorecard | Repository posture: branch protection, pinning, signing, token permissions | same workflow, weekly |
+| Syft | Signed SPDX SBOMs attached to each release | `.github/workflows/sbom.yml`, run against the draft release |
+| Dependabot | Version bumps for the base image and the pinned actions; security alerts | `.github/dependabot.yml` |
+| Secret scanning + push protection | Known token formats, server-side | repository settings |
+| `tools/check_public.py` | This installation's names and addresses, secrets, personal data | git hooks, before anything is published |
+
+Results land in Security > Code scanning, one category per tool. Dependabot alerts stay empty by design: there are no package manifests, which is why the image and Cargo.lock are scanned directly.
+
+**Trust model for CI**, after third-party action compromises (tj-actions/changed-files, trivy-action) in which a moved tag shipped malicious code:
+- **No third-party GitHub Actions.** The repository allows only GitHub-owned actions, and workflows pin even those by full commit SHA, with the version in a comment. Dependabot proposes updates after a 14-day cooldown.
+- **Scanners are release binaries, pinned by version and SHA-256** in `.github/scripts/fetch-tool.sh`, the only place third-party code enters CI. A pin is chosen only from a release at least 14 days old, and only when GitHub's recorded asset digest and the publisher's checksum file agree. To update one, change the version and the hash together, from both sources, and review it like code.
+- **Least privilege.** Every workflow starts from `permissions: {}` or `contents: read`, and checkout never keeps credentials. A job that runs a third-party scanner holds only a read-only token and no secrets. Writing results (`security-events: write`), signing (`id-token`, `attestations`) and attaching to a release (`contents: write`) happen in separate jobs that run only GitHub's own actions and the gh CLI.
+- **No secrets in CI.** Nothing in this repository's Actions needs one; keep it that way.
+- **Release process with SBOMs**: `gh release create vX.Y.Z --draft --verify-tag ...`, then `gh workflow run sbom.yml -f tag=vX.Y.Z`, wait for it, check the three `sbom-*.spdx.json` assets, then publish (`gh release edit vX.Y.Z --draft=false --latest`). Published releases are immutable.
+
 ## FPP facts this code depends on
 
 - **Settings**: `/api/settings` is the schema. Only entries with a `"type"` are user settings; the rest (Platform, *Directory, locale, ...) are computed and must never be written into a settings file. The live API reports schema defaults for unset keys. A checkbox with no value is off; a select's default is the option whose label contains `(Default)`. The real settings file is in the newest FPP backup JSON (`settings.system_settings[0]`); FPP makes a backup automatically when settings are saved.

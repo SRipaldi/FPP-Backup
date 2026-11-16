@@ -1,0 +1,156 @@
+# Dependency (SCA) and repository-posture scans; results go to Security > Code scanning.
+#
+#   builder image   the card-builder container as build_image.sh runs it (pinned Debian base + the
+#                   packages it installs), for known vulnerabilities (OSV-Scanner)
+#   bb-imager       the Rust dependencies (Cargo.lock) of the pinned bb-imager-cli (OSV-Scanner)
+#   scorecard       OpenSSF Scorecard: branch protection, pinning, signing, token permissions...
+#
+# Weekly (vulnerabilities are published over time, not only when this repo changes), on a pull request
+# that touches what is scanned, and by hand.
+#
+# Trust model (see AGENTS.md "CI and scanning"): no third-party actions; GitHub-owned actions pinned by
+# commit SHA; scanners pinned by version and SHA-256 (.github/scripts/fetch-tool.sh). The jobs that run a
+# scanner get a read-only token and no secrets; only the last job, which runs nothing but GitHub's own
+# upload action, may write security results.
+name: Security scans
+
+on:
+  schedule:
+    - cron: "17 6 * * 1"   # Mondays 06:17 UTC
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - tools/builder/Dockerfile
+      - tools/build_image.sh
+      - tools/setup_bb_imager.sh
+      - .github/scripts/**
+      - .github/workflows/security-scans.yml
+  push:
+    branches: [main]
+    paths:
+      - tools/builder/Dockerfile
+      - tools/build_image.sh
+      - tools/setup_bb_imager.sh
+      - .github/scripts/**
+      - .github/workflows/security-scans.yml
+
+permissions: {}
+
+jobs:
+  builder-image:
+    name: OSV-Scanner (builder image)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install OSV-Scanner (pinned, SHA-256 verified)
+        run: .github/scripts/fetch-tool.sh osv-scanner
+      - name: Assemble the builder image as it runs
+        run: .github/scripts/builder-runtime-image.sh "$RUNNER_TEMP/builder.tar"
+      - name: Scan
+        run: |
+          # Exit 1 means vulnerabilities were found: they are reported through code scanning, not as a failed job.
+          rc=0
+          osv-scanner scan image --archive "$RUNNER_TEMP/builder.tar" --format sarif --output osv-builder-image.sarif || rc=$?
+          [ "$rc" -le 1 ] || { echo "::error::osv-scanner failed ($rc)"; exit "$rc"; }
+          osv-scanner scan image --archive "$RUNNER_TEMP/builder.tar" --format table || true
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          name: sarif-osv-builder-image
+          path: osv-builder-image.sarif
+          retention-days: 7
+
+  bb-imager:
+    name: OSV-Scanner (bb-imager Rust deps)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install OSV-Scanner (pinned, SHA-256 verified)
+        run: .github/scripts/fetch-tool.sh osv-scanner
+      - name: Check out bb-imager at the pinned commit
+        run: .github/scripts/fetch-bb-imager.sh "$RUNNER_TEMP/bb-imager"
+      - name: Scan
+        run: |
+          rc=0
+          osv-scanner scan source --lockfile "$RUNNER_TEMP/bb-imager/Cargo.lock" --format sarif --output osv-bb-imager.sarif || rc=$?
+          [ "$rc" -le 1 ] || { echo "::error::osv-scanner failed ($rc)"; exit "$rc"; }
+          osv-scanner scan source --lockfile "$RUNNER_TEMP/bb-imager/Cargo.lock" --format table || true
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          name: sarif-osv-bb-imager
+          path: osv-bb-imager.sarif
+          retention-days: 7
+
+  scorecard:
+    name: OpenSSF Scorecard
+    # Scores the repository's settings on main; meaningless on a pull request.
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read
+      checks: read
+      issues: read
+      pull-requests: read
+      security-events: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install Scorecard (pinned, SHA-256 verified)
+        run: .github/scripts/fetch-tool.sh scorecard
+      - name: Score
+        env:
+          GITHUB_AUTH_TOKEN: ${{ github.token }}   # read-only (see permissions above)
+        run: |
+          scorecard --repo="github.com/${GITHUB_REPOSITORY}" --format=sarif --show-details > scorecard.sarif
+          scorecard --repo="github.com/${GITHUB_REPOSITORY}" --show-details || true
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          name: sarif-scorecard
+          path: scorecard.sarif
+          retention-days: 7
+
+  publish:
+    name: Publish results to code scanning
+    needs: [builder-image, bb-imager, scorecard]
+    # Publish whatever ran (scorecard is skipped on pull requests). Not for forks: no write token there.
+    if: ${{ !cancelled() && github.event.pull_request.head.repo.fork != true }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
+        with:
+          pattern: sarif-*
+          path: sarif
+      - name: Upload builder image results
+        if: hashFiles('sarif/sarif-osv-builder-image/*.sarif') != ''
+        uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370  # v4.39.1
+        with:
+          sarif_file: sarif/sarif-osv-builder-image/osv-builder-image.sarif
+          category: osv-builder-image
+      - name: Upload bb-imager results
+        if: hashFiles('sarif/sarif-osv-bb-imager/*.sarif') != ''
+        uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370  # v4.39.1
+        with:
+          sarif_file: sarif/sarif-osv-bb-imager/osv-bb-imager.sarif
+          category: osv-bb-imager
+      - name: Upload Scorecard results
+        if: hashFiles('sarif/sarif-scorecard/*.sarif') != ''
+        uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370  # v4.39.1
+        with:
+          sarif_file: sarif/sarif-scorecard/scorecard.sarif
+          category: scorecard
