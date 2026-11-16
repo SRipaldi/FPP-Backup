@@ -3,7 +3,6 @@
 #
 #   builder image   the card-builder container exactly as build_image.sh builds it (tools/builder/
 #                   Dockerfile: pinned Alpine base + its packages), for known vulnerabilities (OSV-Scanner)
-#   bb-imager       the Rust dependencies (Cargo.lock) of the pinned bb-imager-cli (OSV-Scanner)
 #   scorecard       OpenSSF Scorecard: branch protection, pinning, signing, token permissions...
 #
 # Weekly (vulnerabilities are published over time, not only when this repo changes), on a pull request
@@ -23,7 +22,6 @@ on:
     paths:
       - tools/builder/Dockerfile
       - tools/build_image.sh
-      - tools/setup_bb_imager.sh
       - .github/scripts/**
       - .github/workflows/security-scans.yml
   push:
@@ -31,7 +29,6 @@ on:
     paths:
       - tools/builder/Dockerfile
       - tools/build_image.sh
-      - tools/setup_bb_imager.sh
       - .github/scripts/**
       - .github/workflows/security-scans.yml
 
@@ -65,31 +62,6 @@ jobs:
           path: osv-builder-image.sarif
           retention-days: 7
 
-  bb-imager:
-    name: OSV-Scanner (bb-imager Rust deps)
-    runs-on: ubuntu-24.04
-    timeout-minutes: 10
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
-        with:
-          persist-credentials: false
-      - name: Install OSV-Scanner (pinned, SHA-256 verified)
-        run: .github/scripts/fetch-tool.sh osv-scanner
-      - name: Check out bb-imager at the pinned commit
-        run: .github/scripts/fetch-bb-imager.sh "$RUNNER_TEMP/bb-imager"
-      - name: Scan
-        run: |
-          rc=0
-          osv-scanner scan source --lockfile "$RUNNER_TEMP/bb-imager/Cargo.lock" --format sarif --output osv-bb-imager.sarif || rc=$?
-          [ "$rc" -le 1 ] || { echo "::error::osv-scanner failed ($rc)"; exit "$rc"; }
-          osv-scanner scan source --lockfile "$RUNNER_TEMP/bb-imager/Cargo.lock" --format table || true
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
-        with:
-          name: sarif-osv-bb-imager
-          path: osv-bb-imager.sarif
-          retention-days: 7
 
   scorecard:
     name: OpenSSF Scorecard
@@ -135,7 +107,7 @@ jobs:
 
   publish:
     name: Publish results to code scanning
-    needs: [builder-image, bb-imager]
+    needs: [builder-image]
     # Not for forks: no write token there.
     if: ${{ !cancelled() && github.event.pull_request.head.repo.fork != true }}
     runs-on: ubuntu-24.04
@@ -154,9 +126,3 @@ jobs:
         with:
           sarif_file: sarif/sarif-osv-builder-image/osv-builder-image.sarif
           category: osv-builder-image
-      - name: Upload bb-imager results
-        if: hashFiles('sarif/sarif-osv-bb-imager/*.sarif') != ''
-        uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370  # v4.39.1
-        with:
-          sarif_file: sarif/sarif-osv-bb-imager/osv-bb-imager.sarif
-          category: osv-bb-imager

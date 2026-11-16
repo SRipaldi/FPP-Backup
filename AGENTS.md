@@ -9,8 +9,8 @@ A local tool for an FPP (Falcon Player) light show: back up controllers, keep th
 ## Set up
 
 1. **Python 3.9+**, standard library only. There is no `requirements.txt` or virtualenv, and none should be added without a reason: the UI server and every tool run with the system `python3` (macOS ships 3.9). Keep code 3.9-compatible: no `match`, no `X | Y` type unions.
-2. **Docker engine** for `tools/build_image.sh` only. The owner uses Rancher Desktop (dockerd/moby): CLI at `~/.rd/bin`, socket at `~/.rd/docker.sock` (not `/var/run/docker.sock`). The script sets `DOCKER_HOST` itself. Containers run `--privileged` (loop mounts) and pull `debian:trixie-slim`.
-3. **bb-imager-cli** for SD card detection: `tools/setup_bb_imager.sh` (needs `cargo`) clones `beagleboard/bb-imager-rs` at a pinned tag and builds it into `work/bin/`. It is used only for `list-destinations sd`; writing does not use it.
+2. **Docker engine** for `tools/build_image.sh` only. The owner uses Rancher Desktop (dockerd/moby): CLI at `~/.rd/bin`, socket at `~/.rd/docker.sock` (not `/var/run/docker.sock`). The script sets `DOCKER_HOST` itself. Containers run `--privileged` (loop mounts); the image is built from `tools/builder/Dockerfile` (Alpine) on each run.
+3. **SD cards** are found with macOS's own `diskutil` (`flash_card.sd_destinations`): a physical whole disk reported as removable or ejectable, the BeagleBoard Imaging Utility's rule. Nothing to install.
 4. **Config** lives in `config/` (gitignored): `settings.json` (player address, monitor, update check, backup age), `fleet-inventory.json`, `fleet-policy.json`. With no `settings.json`, the UI opens on Settings and the CLI asks for `--master`. The policy is created on first scan from `templates/fleet-policy.json` (`@player` values filled from the player). Never commit anything in `config/`, `snapshots/` or `work/`.
 5. **Run**: `python3 ui/server.py [--no-browser] [--no-monitor] [--port N] [--master IP]`, then http://127.0.0.1:8765/. Flashing needs the server started from the user's GUI login session (see macOS below).
 
@@ -84,7 +84,7 @@ The fleet is a real, running light show.
 - **Secrets on disk**: snapshot, stage and build tools set `umask 077`.
 - **Controller passwords**: only in the Keychain (`fpp_http`, service `FPP-Backup`, accounts `default` and `host:<HostName>`; `FPP_BACKUP_KEYCHAIN` points tests at another service). Never return a password from an endpoint or write one to `config/`. Every controller request must go through `fpp_http.request` (via `fleet.fetch`/`fetch_json`) so it carries the password. Through the player's proxy only one Authorization header is sent: the controller's password, else the default; different player and controller passwords therefore need direct access.
 - **Incremental media** (`snapshot.py`): reused files are hard links into the previous snapshot. Never write into a snapshot after it is taken (that would change older ones too); the reuse rule is same size plus an identical recorded mtime; only for snapshots that recorded none, a listing mtime older than the previous snapshot's start minus 10 minutes (BeagleBones can stamp uploads with a stale date before NTP, so the older-than rule alone is not trusted). Staging copies the files, so builds never write through a link.
-- **Supply chain**: FPP images are checked against the SHA-256 GitHub publishes (`get_image.py`); the build container is built from `tools/builder/Dockerfile` on every run (`--no-cache`, so its Alpine packages are the current, patched ones) on a base pinned by digest (Dependabot proposes bumps); bb-imager-cli is built `--locked` from a pinned commit. Bump pins deliberately.
+- **Supply chain**: FPP images are checked against the SHA-256 GitHub publishes (`get_image.py`); the build container is built from `tools/builder/Dockerfile` on every run (`--no-cache`, so its Alpine packages are the current, patched ones) on a base pinned by digest (Dependabot proposes bumps). Bump pins deliberately. Fewer dependencies beat scanned dependencies: bb-imager-cli (~790 Rust crates) was dropped for `diskutil`.
 - **xLights automation port** (49913) has no auth, binds all interfaces and allows any origin; never leave it on in instructions or defaults.
 
 ## CI and scanning
@@ -93,7 +93,7 @@ The fleet is a real, running light show.
 |---|---|---|
 | CodeQL (`security-extended` queries) | SAST: Python and JavaScript | GitHub default setup; every PR and weekly. A high or critical alert blocks merging (ruleset). |
 | ShellCheck, hadolint | The shell scripts and the builder Dockerfile, which CodeQL can't read | `.github/workflows/lint.yml`, every PR |
-| OSV-Scanner | SCA: the builder container exactly as `build_image.sh` builds it (`tools/builder/Dockerfile`), and bb-imager's `Cargo.lock` at the pinned commit | `.github/workflows/security-scans.yml`, weekly + PRs touching them |
+| OSV-Scanner | SCA: the builder container exactly as `build_image.sh` builds it (`tools/builder/Dockerfile`) | `.github/workflows/security-scans.yml`, weekly + PRs touching them |
 | OpenSSF Scorecard | Repository posture: branch protection, pinning, signing, token permissions | same workflow, weekly; a score table on the run's summary page |
 | Unit tests | `tests/` on Python 3.9, 3.13 and Apple's `/usr/bin/python3` (the one the owner runs), plus `check_public.py --all` | `.github/workflows/tests.yml`, every PR (required) |
 | Atheris (libFuzzer) | Fuzzing the parsers of untrusted input: controller logs, release notes, settings that become shell, FSEQ headers, the policy, the leak check's regexes (`fuzz/fuzz.py`) | `.github/workflows/fuzz.yml`, 1 min per target on PRs touching `tools/`, 10 min weekly |
@@ -140,7 +140,7 @@ CodeQL and OSV-Scanner results land in Security > Code scanning, one category pe
 
 ## macOS specifics
 
-- Writing an SD card as root fails ("Operation not permitted", privacy protection), and bb-imager-cli's own authopen path fails with -60008. `flash_card.py` opens the device with `/usr/libexec/authopen -stdoutpipe -o O_RDWR` and receives the file descriptor over a socket, as the BeagleBoard GUI does. The admin dialog needs the user's GUI session: an agent's shell usually cannot show it, so the user runs the flash.
+- Writing an SD card as root fails ("Operation not permitted", privacy protection), and the BeagleBoard Imaging Utility's CLI authopen path failed with -60008. `flash_card.py` opens the device with `/usr/libexec/authopen -stdoutpipe -o O_RDWR` and receives the file descriptor over a socket, as the BeagleBoard GUI does. The admin dialog needs the user's GUI session: an agent's shell usually cannot show it, so the user runs the flash.
 - Loop devices leak in the Rancher VM if a container exits with mounts held; `build_image.sh` detaches its own and verifies. Never detach `loop0` (the VM's modloop).
 - In zsh, unquoted `$VAR` is not word-split; inline `python3 -c` with f-strings containing backslashes fails on 3.9. Prefer heredoc scripts.
 
